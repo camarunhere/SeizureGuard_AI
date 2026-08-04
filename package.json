@@ -1,0 +1,12 @@
+{
+  "name": "seizureguard-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SeizureGuard AI — AI-powered clinical decision support platform for early epileptic seizure prediction",
+  "scripts": {
+    "setup": "npm install --prefix server && npm install --prefix frontend && npm run build",
+    "build": "npm run build --prefix frontend",
+    "start": "npm start --prefix server",
+    "dev": "npm run dev --prefix server"
+  }
+}

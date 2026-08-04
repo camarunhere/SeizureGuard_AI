@@ -1,0 +1,21 @@
+{
+  "deep_model": "CNN + BiLSTM + Transformer (PyTorch)",
+  "deep_model_test_auc": 0.9997,
+  "surrogate_model": "GradientBoostingClassifier (engineered EEG features)",
+  "surrogate_test_auc": 0.9977,
+  "n_train": 9200,
+  "n_test": 2300,
+  "dataset": "Epileptic Seizure Recognition (Andrzejak et al., Bonn University / UCI)",
+  "feature_names": [
+    "delta_power",
+    "theta_power",
+    "alpha_power",
+    "beta_power",
+    "gamma_power",
+    "mean_amplitude",
+    "std_amplitude",
+    "peak_amplitude",
+    "line_length",
+    "zero_crossing_rate"
+  ]
+}

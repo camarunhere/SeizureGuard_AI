@@ -1,0 +1,18 @@
+{
+  "name": "seizureguard-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Node.js + Express + MongoDB backend for SeizureGuard AI",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --env-file-if-exists=.env --watch src/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.0"
+  }
+}
