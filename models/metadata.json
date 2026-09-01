@@ -1,12 +1,12 @@
 {
   "deep_model": "CNN + BiLSTM + Transformer (PyTorch)",
-  "deep_model_test_auc": 0.9998,
+  "deep_model_test_auc": 0.9995,
   "deep_model_metrics": {
-    "accuracy": 0.9778,
-    "precision": 0.9018,
-    "recall": 0.9978,
-    "f1": 0.9474,
-    "roc_auc": 0.9998
+    "accuracy": 0.9817,
+    "precision": 0.9231,
+    "recall": 0.9913,
+    "f1": 0.956,
+    "roc_auc": 0.9995
   },
   "surrogate_model": "XGBoost (engineered EEG features) \u2014 deployed for live SHAP explainability",
   "surrogate_test_auc": 0.9983,
