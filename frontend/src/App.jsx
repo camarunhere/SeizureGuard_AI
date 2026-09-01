@@ -7,6 +7,7 @@ import AuthPage from "./AuthPage";
 import PatientPortal from "./PatientPortal";
 import CaregiverPortal from "./CaregiverPortal";
 import ClinicianPortal from "./ClinicianPortal";
+import AdminPortal from "./AdminPortal";
 import Background, { BG_TINTS } from "./Background";
 
 const NAV = {
@@ -26,6 +27,9 @@ const NAV = {
   ],
   clinician: [
     ["patients", "Patients"],
+  ],
+  admin: [
+    ["clinicians", "Clinician Approvals"],
   ],
 };
 
@@ -47,12 +51,16 @@ const PAGE_HERO = {
   clinician: {
     patients: ["🩺", "Clinical Dashboard", "Multi-patient monitoring, AI reports, clinical decision support.", "from-blue-900 via-indigo-800 to-slate-800"],
   },
+  admin: {
+    clinicians: ["🛡️", "Clinician Approvals", "Review and approve clinician registrations before they can log in.", "from-slate-900 via-blue-950 to-slate-800"],
+  },
 };
 
 const PAGE_BG = {
   patient: { dashboard: "brain", live: "livewave", predictions: "network", xai: "insight", benchmark: "network", alerts: "alert", history: "timeline", profile: "profile" },
   caregiver: { patients: "link", alerts: "alert" },
   clinician: { patients: "clinical" },
+  admin: { clinicians: "clinical" },
 };
 
 export default function App() {
@@ -122,6 +130,7 @@ export default function App() {
           )}
           {user.role === "patient" ? <PatientPortal tab={active} />
             : user.role === "caregiver" ? <CaregiverPortal tab={active} />
+            : user.role === "admin" ? <AdminPortal />
             : <ClinicianPortal />}
         </main>
       </div>

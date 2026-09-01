@@ -11,6 +11,7 @@ function userPayload(u) {
     email: u.email,
     full_name: u.fullName,
     role: u.role,
+    approval_status: u.approvalStatus,
     patient_code: u.patientCode || null,
     age: u.age ?? null,
     medical_history: u.medicalHistory || "",
@@ -26,6 +27,7 @@ router.post("/register", async (req, res) => {
     return res.status(422).json({ detail: "A valid email is required." });
   if (!password || String(password).length < 6)
     return res.status(422).json({ detail: "Password must be at least 6 characters." });
+  // "admin" is deliberately excluded — never self-registerable via the public form.
   if (!["patient", "caregiver", "clinician"].includes(role))
     return res.status(422).json({ detail: "Role must be patient, caregiver or clinician." });
 
@@ -44,9 +46,19 @@ router.post("/register", async (req, res) => {
     doc.age = age || null;
     doc.medicalHistory = medical_history || "";
   }
+  if (role === "clinician") doc.approvalStatus = "pending";
 
   const user = await User.create(doc);
   await logActivity(user, "register", `role=${role}`);
+
+  if (user.approvalStatus === "pending") {
+    // No token issued — a pending clinician account cannot be "opened" until
+    // an admin approves it (see /login below).
+    return res.json({
+      pending: true,
+      message: "Registration submitted. Your clinician account is pending admin approval before you can log in.",
+    });
+  }
   res.json({ token: createToken(user), user: userPayload(user) });
 });
 
@@ -56,6 +68,12 @@ router.post("/login", async (req, res) => {
   if (!user || !(await bcrypt.compare(password || "", user.passwordHash)))
     return res.status(401).json({ detail: "Invalid email or password." });
   if (user.isBlocked) return res.status(403).json({ detail: "This account has been blocked." });
+  if (user.role === "clinician" && user.approvalStatus !== "approved") {
+    const detail = user.approvalStatus === "rejected"
+      ? "This clinician account was not approved. Contact an administrator."
+      : "This clinician account is pending admin approval and cannot log in yet.";
+    return res.status(403).json({ detail });
+  }
 
   await logActivity(user, "login");
   res.json({ token: createToken(user), user: userPayload(user) });

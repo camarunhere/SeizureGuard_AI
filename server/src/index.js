@@ -8,6 +8,7 @@ import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patient.js";
 import caregiverRoutes from "./routes/caregiver.js";
 import clinicianRoutes from "./routes/clinician.js";
+import adminRoutes from "./routes/admin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIST = path.resolve(__dirname, "..", "..", "frontend", "dist");
@@ -25,6 +26,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/patient", patientRoutes);
 app.use("/api/caregiver", caregiverRoutes);
 app.use("/api/clinician", clinicianRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.use(express.static(FRONTEND_DIST));
 app.get("*", (req, res) => {

@@ -7,8 +7,12 @@ const userSchema = new Schema({
   email: { type: String, required: true, unique: true, lowercase: true, index: true },
   passwordHash: { type: String, required: true },
   fullName: { type: String, required: true },
-  role: { type: String, enum: ["patient", "caregiver", "clinician"], default: "patient" },
+  role: { type: String, enum: ["patient", "caregiver", "clinician", "admin"], default: "patient" },
   isBlocked: { type: Boolean, default: false },
+  // Clinician accounts require admin sign-off before they can log in; every
+  // other role is auto-approved. "admin" is never self-registered (see
+  // routes/auth.js) so it's always created already approved.
+  approvalStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "approved" },
 
   // Patient-only fields
   patientCode: { type: String, unique: true, sparse: true, index: true }, // shareable link code

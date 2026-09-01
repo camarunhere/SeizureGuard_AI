@@ -6,7 +6,8 @@ import Background, { BG_TINTS } from "./Background";
 const ROLES = [
   { key: "patient", icon: "🧑‍🦽", label: "Patient", features: ["Personal monitoring", "Risk prediction", "Health history"] },
   { key: "caregiver", icon: "🤝", label: "Caregiver", features: ["Patient monitoring", "Emergency alerts", "Notifications"] },
-  { key: "clinician", icon: "🩺", label: "Clinician", features: ["Multiple patient dashboard", "Clinical analytics", "AI reports"] },
+  { key: "clinician", icon: "🩺", label: "Clinician", features: ["Multiple patient dashboard", "Clinical analytics", "AI reports"], requiresApproval: true },
+  { key: "admin", icon: "🛡️", label: "Admin", features: ["Approve clinician accounts"], loginOnly: true },
 ];
 
 export default function AuthPage({ onLogin, onBack }) {
@@ -14,15 +15,23 @@ export default function AuthPage({ onLogin, onBack }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ full_name: "", email: "", password: "", age: "", medical_history: "" });
   const [error, setError] = useState("");
+  const [pendingMessage, setPendingMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [showPw, setShowPw] = useState(false);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const activeRole = ROLES.find((r) => r.key === role);
 
+  const selectRole = (key) => {
+    setRole(key);
+    setPendingMessage("");
+    if (ROLES.find((r) => r.key === key)?.loginOnly) setMode("login");
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setError("");
+    setPendingMessage("");
     setBusy(true);
     try {
       const path = mode === "login" ? "/api/auth/login" : "/api/auth/register";
@@ -31,6 +40,13 @@ export default function AuthPage({ onLogin, onBack }) {
           ? { email: form.email, password: form.password }
           : { ...form, role, age: form.age ? Number(form.age) : null };
       const data = await api(path, { method: "POST", body });
+      if (data.pending) {
+        // Clinician registration submitted but not approved yet — no session
+        // to store, nothing to log into. See routes/auth.js.
+        setPendingMessage(data.message);
+        setMode("login");
+        return;
+      }
       storeSession(data.token, data.user);
       onLogin(data.user);
     } catch (err) {
@@ -51,11 +67,11 @@ export default function AuthPage({ onLogin, onBack }) {
           <p className="text-sm text-slate-500 mt-1">Select your user type</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 mb-4">
+        <div className="grid grid-cols-4 gap-2 mb-4">
           {ROLES.map((r) => (
             <button
               key={r.key}
-              onClick={() => setRole(r.key)}
+              onClick={() => selectRole(r.key)}
               className={`py-3 rounded-xl border text-sm font-semibold transition flex flex-col items-center gap-1 ${
                 role === r.key ? "bg-blue-950 border-blue-950 text-white shadow-md" : "bg-white/70 border-slate-200 text-slate-600 hover:border-blue-300"
               }`}
@@ -72,21 +88,33 @@ export default function AuthPage({ onLogin, onBack }) {
             ))}
           </ul>
 
-          <div className="flex rounded-lg bg-slate-100 p-1 mb-6">
-            {["login", "register"].map((m) => (
-              <button
-                key={m}
-                onClick={() => { setMode(m); setError(""); }}
-                className={`flex-1 py-2 rounded-md text-sm font-semibold capitalize transition ${
-                  mode === m ? "bg-white shadow text-slate-900" : "text-slate-500"
-                }`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
+          {!activeRole.loginOnly && (
+            <div className="flex rounded-lg bg-slate-100 p-1 mb-6">
+              {["login", "register"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => { setMode(m); setError(""); setPendingMessage(""); }}
+                  className={`flex-1 py-2 rounded-md text-sm font-semibold capitalize transition ${
+                    mode === m ? "bg-white shadow text-slate-900" : "text-slate-500"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          )}
+          {activeRole.loginOnly && (
+            <p className="text-xs text-slate-400 mb-6">Admin accounts are created directly by an existing administrator — there's no public sign-up for this role.</p>
+          )}
+
+          {mode === "register" && activeRole.requiresApproval && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+              Clinician accounts require admin approval before you can log in. You'll get access once an administrator reviews your registration.
+            </p>
+          )}
 
           <Alert>{error}</Alert>
+          <Alert kind="success">{pendingMessage}</Alert>
 
           <form onSubmit={submit} className="space-y-4">
             {mode === "register" && (
