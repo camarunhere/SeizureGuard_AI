@@ -12,6 +12,18 @@ Run with: uvicorn src.ml_service:app --port 8001
 
 from __future__ import annotations
 
+import os
+
+# PyTorch and XGBoost each bundle/link their own OpenMP runtime. Running both
+# multi-threaded in one process segfaults (verified in src/train.py — import
+# order and KMP_DUPLICATE_LIB_OK alone were NOT enough, it's a genuine
+# thread-pool race). This service loads an XGBoost model via joblib further
+# down (which imports xgboost lazily), so: import it explicitly first, and
+# force both libraries single-threaded, before torch is ever imported.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+import xgboost  # noqa: F401,E402 — unused directly; must precede `import torch`
+
 import json
 import random
 from pathlib import Path
@@ -26,6 +38,8 @@ from pydantic import BaseModel, Field
 from src.explain import explain_eeg, explain_vitals
 from src.model import SeizureNet
 from src.preprocessing import SIGNAL_COLUMNS, load_raw, binarize, engineer_features
+
+torch.set_num_threads(1)  # see the OpenMP note above — must stay single-threaded alongside xgboost
 
 MODEL_DIR = Path("models")
 DATA_PATH = Path("data/eeg_seizure_raw.csv")

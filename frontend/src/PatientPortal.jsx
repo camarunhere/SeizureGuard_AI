@@ -832,16 +832,17 @@ function ExplainableAI() {
 // Real numbers only, from models/metadata.json (written by src/train.py after
 // an actual training run) — never invented. Rows for model variants that
 // were never actually trained here (plain CNN, plain BiLSTM, CNN-BiLSTM
-// without the Transformer) are left blank rather than guessed; the only
-// baseline genuinely trained in this codebase is the GradientBoosting
-// surrogate used for explainability, not XGBoost.
+// without the Transformer) are left blank rather than guessed. XGBoost is
+// the deployed explainability surrogate (SHAP runs against it); Gradient
+// Boosting is trained purely as a real comparison baseline, not deployed.
 
 const BENCHMARK_ROWS = [
-  { key: "gb_surrogate", label: "Gradient Boosting (explainability surrogate)", metaKey: "surrogate" },
+  { key: "gb_baseline", label: "Gradient Boosting (comparison baseline, not deployed)", metaKey: "baseline" },
   { key: "cnn", label: "CNN only", metaKey: null },
   { key: "bilstm", label: "BiLSTM only", metaKey: null },
   { key: "cnn_bilstm", label: "CNN + BiLSTM (no Transformer)", metaKey: null },
-  { key: "full", label: "CNN + BiLSTM + Transformer (deployed model)", metaKey: "deep_model" },
+  { key: "xgb_surrogate", label: "XGBoost (explainability surrogate, deployed)", metaKey: "surrogate" },
+  { key: "full", label: "CNN + BiLSTM + Transformer (deployed primary model)", metaKey: "deep_model" },
 ];
 
 function fmtMetric(v) { return v == null ? "—" : `${(v * 100).toFixed(1)}%`; }
@@ -854,6 +855,7 @@ function ModelBenchmark() {
   const metricsFor = (metaKey) => {
     if (metaKey === "deep_model") return data.deep_model_metrics || { roc_auc: data.deep_model_test_auc };
     if (metaKey === "surrogate") return data.surrogate_metrics || { roc_auc: data.surrogate_test_auc };
+    if (metaKey === "baseline") return data.baseline_metrics;
     return null;
   };
 

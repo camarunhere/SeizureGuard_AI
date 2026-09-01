@@ -258,7 +258,7 @@ function AiReport({ patientId, predictionId, onClose }) {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">AI model</p>
               <div className="text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2 space-y-0.5">
                 <p><span className="text-slate-400">Model:</span> CNN + BiLSTM + Transformer (PyTorch)</p>
-                <p><span className="text-slate-400">Explainability surrogate:</span> Gradient Boosting on engineered EEG features (SHAP)</p>
+                <p><span className="text-slate-400">Explainability surrogate:</span> XGBoost on engineered EEG features (SHAP)</p>
               </div>
             </div>
 
