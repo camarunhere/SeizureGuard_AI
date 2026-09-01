@@ -126,9 +126,19 @@ def predict(req: PredictRequest):
     risk_level, prediction_class, window = _classify(probability)
 
     features = engineer_features(signal)
-    eeg_reasons = explain_eeg(
-        _state["surrogate"], features.to_numpy(), _state["feature_names"]
-    )
+    try:
+        eeg_reasons = explain_eeg(
+            _state["surrogate"], features.to_numpy(), _state["feature_names"]
+        )
+    except Exception as exc:
+        # Explainability (SHAP) is auxiliary to the prediction above, which
+        # already succeeded — never let a failure here take down the actual
+        # risk score. A persistent failure usually means a SHAP/XGBoost
+        # version mismatch (see the pinned versions in requirements.txt,
+        # and reinstall with `pip install -r requirements.txt` if this
+        # keeps firing after a pull).
+        print(f"[ml] EEG explainability failed, returning prediction without it: {exc}")
+        eeg_reasons = []
     vital_reasons = explain_vitals(req.model_dump())
     reasons = eeg_reasons + vital_reasons
 
