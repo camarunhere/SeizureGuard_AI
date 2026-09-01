@@ -1,8 +1,30 @@
 {
   "deep_model": "CNN + BiLSTM + Transformer (PyTorch)",
-  "deep_model_test_auc": 0.9997,
-  "surrogate_model": "GradientBoostingClassifier (engineered EEG features)",
-  "surrogate_test_auc": 0.9977,
+  "deep_model_test_auc": 0.9998,
+  "deep_model_metrics": {
+    "accuracy": 0.9778,
+    "precision": 0.9018,
+    "recall": 0.9978,
+    "f1": 0.9474,
+    "roc_auc": 0.9998
+  },
+  "surrogate_model": "XGBoost (engineered EEG features) \u2014 deployed for live SHAP explainability",
+  "surrogate_test_auc": 0.9983,
+  "surrogate_metrics": {
+    "accuracy": 0.9826,
+    "precision": 0.9545,
+    "recall": 0.9587,
+    "f1": 0.9566,
+    "roc_auc": 0.9983
+  },
+  "baseline_model": "GradientBoostingClassifier (engineered EEG features) \u2014 benchmark comparison only, not deployed",
+  "baseline_metrics": {
+    "accuracy": 0.983,
+    "precision": 0.9566,
+    "recall": 0.9587,
+    "f1": 0.9577,
+    "roc_auc": 0.9977
+  },
   "n_train": 9200,
   "n_test": 2300,
   "dataset": "Epileptic Seizure Recognition (Andrzejak et al., Bonn University / UCI)",
