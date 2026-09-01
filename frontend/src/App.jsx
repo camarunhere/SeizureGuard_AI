@@ -1,7 +1,5 @@
 import { useState } from "react";
 import { api, clearSession, getStoredUser, getToken } from "./api";
-import { BluetoothProvider } from "./bluetooth";
-import { BitalinoProvider } from "./bitalino";
 import LandingPage from "./LandingPage";
 import AuthPage from "./AuthPage";
 import PatientPortal from "./PatientPortal";
@@ -86,12 +84,6 @@ export default function App() {
   const hero = PAGE_HERO[user.role]?.[active];
 
   return (
-    // BluetoothProvider sits above <main key={active}>, which remounts its
-    // whole subtree on every nav change (see the fade-in-up key below) — a
-    // paired device's connection would otherwise be torn down every time the
-    // user switches tabs.
-    <BluetoothProvider>
-    <BitalinoProvider>
       <div className={`min-h-screen ${BG_TINTS[bgVariant] || "bg-slate-100"}`}>
         <Background variant={bgVariant} />
         <header className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 border-b border-white/10 sticky top-0 z-20 shadow-lg shadow-slate-900/20">
@@ -134,7 +126,5 @@ export default function App() {
             : <ClinicianPortal />}
         </main>
       </div>
-    </BitalinoProvider>
-    </BluetoothProvider>
   );
 }

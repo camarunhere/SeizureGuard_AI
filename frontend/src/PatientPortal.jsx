@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import { api, useApi } from "./api";
-import { useHeartRateDevice } from "./bluetooth";
-import { useBitalino } from "./bitalino";
 import {
   Alert, Button, Card, CountUp, EEGWaveform, Field, Skeleton, Spinner,
   TrendChart, RiskBadge, RiskFingerprint, classLabel, fmtDate, inputCls, primaryContributors, riskStyle,
@@ -128,15 +126,9 @@ function AckButton({ path, onDone, small }) {
   );
 }
 
-// ---- Live Monitoring: manual entry or paired device ----------------------------
-
-const LIVE_MODES = [
-  { key: "manual", label: "Manual entry" },
-  { key: "device", label: "Connect device" },
-];
+// ---- Live Monitoring: manual entry ----------------------------------------------
 
 function LiveMonitoring() {
-  const [mode, setMode] = useState("manual");
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);
 
@@ -149,24 +141,7 @@ function LiveMonitoring() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <div className="flex flex-wrap gap-2">
-          {LIVE_MODES.map((m) => (
-            <button
-              key={m.key}
-              onClick={() => setMode(m.key)}
-              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
-                mode === m.key ? "bg-blue-900 text-white shadow-md shadow-blue-900/25" : "bg-white/70 border border-slate-200 text-slate-600 hover:bg-white"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      {mode === "manual" && <ManualEntry onResult={onResult} />}
-      {mode === "device" && <DeviceEntry onResult={onResult} />}
+      <ManualEntry onResult={onResult} />
 
       {latest?.alert_raised && (
         <Alert kind="error">
@@ -300,8 +275,6 @@ function DecisionSupportSummary({ prediction, history }) {
 
 
 // ---- Manual entry: patient types in vitals, picks a sample EEG epoch type -----
-// EDA/sEMG have no standard Bluetooth profile (unlike heart rate), so these
-// fields are always manual/simulated — see DeviceEntry below and bluetooth.jsx.
 
 // Every field starts genuinely blank — no pre-filled "typical" values that
 // could get silently submitted without the patient actually entering a real
@@ -397,280 +370,6 @@ function ManualEntry({ onResult }) {
         <VitalsFields vitals={vitals} setVitals={setVitals} />
         <Button type="submit" disabled={busy}>{busy && <Spinner />}Run prediction</Button>
       </form>
-    </Card>
-  );
-}
-
-// ---- Connect device: real Bluetooth heart-rate pairing -------------------------
-// Connection is owned by BluetoothProvider (see App.jsx), not this component,
-// so pairing survives switching Live Monitoring modes or navigating away and
-// back — see frontend/src/bluetooth.jsx for why that matters here.
-//
-// Heart rate independently uses the live BLE reading when available and
-// falls back to the manual field otherwise.
-
-function DeviceEntry({ onResult }) {
-  const ble = useHeartRateDevice();
-  const [vitals, setVitals] = useState(EMPTY_VITALS);
-  const [epochType, setEpochType] = useState("normal");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const hrUntrusted = ble.contactOk === false || ble.isStale;
-  const hrLive = ble.status === "connected" && ble.heartRate != null && !hrUntrusted;
-
-  const submit = async () => {
-    setError("");
-    // Fields with no live source are always manual here; heart rate only
-    // needs a manual value when the BLE reading isn't live/trusted. There's
-    // no <form> around this panel (submission isn't a form event), so
-    // required-field checking has to happen here rather than via HTML5
-    // `required` alone.
-    const manualRequired = { spo2: "SpO₂", eda: "EDA", emg: "sEMG", temperature: "Temperature", jerk: "Jerk", rotation_rate: "Rotation rate" };
-    if (!hrLive) manualRequired.heart_rate = "Heart rate";
-    const missing = Object.entries(manualRequired).filter(([k]) => vitals[k].trim() === "").map(([, label]) => label);
-    if (missing.length) {
-      setError(`Enter a value for: ${missing.join(", ")}.`);
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const res = await api("/api/patient/live/reading", {
-        method: "POST",
-        body: {
-          source: "device",
-          epoch_type: epochType,
-          heart_rate: hrLive ? ble.heartRate : Number(vitals.heart_rate),
-          spo2: Number(vitals.spo2),
-          temperature: Number(vitals.temperature),
-          eda: Number(vitals.eda),
-          emg: Number(vitals.emg),
-          movement_level: Number(vitals.movement_level) / 100,
-          jerk: Number(vitals.jerk),
-          rotation_rate: Number(vitals.rotation_rate),
-        },
-      });
-      onResult(res);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <Card title="Heart rate — Bluetooth device">
-        {!ble.supported ? (
-          <Alert kind="info">
-            Web Bluetooth isn't supported in this browser. Try Chrome or Edge on desktop or Android — Safari and iOS don't
-            support pairing Bluetooth devices from the browser. Enter heart rate manually below instead.
-          </Alert>
-        ) : (
-          <>
-            <details className="text-xs text-slate-500 mb-4 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
-              <summary className="cursor-pointer font-semibold text-slate-600">Which devices actually work here?</summary>
-              <div className="mt-2 space-y-2">
-                <p>
-                  <span className="font-semibold text-emerald-700">Works:</span> any device implementing the open Bluetooth
-                  Heart Rate standard — chest straps (Polar H9/H10, Wahoo TICKR, Garmin HRM-Dual/Pro, Movesense) and watches
-                  with an explicit "broadcast heart rate" mode (Garmin: Settings → Sensors → Heart Rate; also some Polar,
-                  Suunto, Coros models).
-                </p>
-                <p>
-                  <span className="font-semibold text-red-600">Won't work:</span> most budget fitness watches (boAt, Noise,
-                  Fire-Boltt, Mi Band) and Apple Watch / Wear OS / Samsung Galaxy Watch — they sync heart rate only with
-                  their own app over a closed protocol. This is a restriction built into Bluetooth security on every
-                  browser, not something any website can work around. Use the manual field below for these instead.
-                </p>
-                <p>
-                  <span className="font-semibold text-amber-700">EDA / sEMG:</span> there's no Bluetooth SIG standard for
-                  electrodermal activity or surface EMG at all (unlike heart rate), so no device can be paired for those
-                  regardless of brand — always manual, below.
-                </p>
-              </div>
-            </details>
-            <Alert>{ble.error}</Alert>
-            {ble.contactOk === false && <Alert kind="info">Sensor contact lost — reposition the strap/watch against skin. Falling back to the manual field until contact is re-established.</Alert>}
-            {ble.isStale && ble.contactOk !== false && <Alert kind="info">No new reading in a while — the connection may have dropped. Reconnecting automatically…</Alert>}
-
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                {ble.status === "connected" ? (
-                  <>
-                    <p className="text-sm font-semibold text-emerald-700">Connected — {ble.deviceName}</p>
-                    <p className="text-2xl font-bold text-slate-800 mt-1">
-                      {ble.heartRate != null ? (
-                        <>{ble.heartRate} <span className="text-sm font-medium text-slate-400">bpm</span></>
-                      ) : (
-                        <span className="text-sm font-normal text-slate-400">Waiting for a reading…</span>
-                      )}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-sm text-slate-400">{ble.status === "connecting" ? "Pairing…" : "No device connected — enter heart rate manually below."}</p>
-                )}
-              </div>
-              <Button
-                variant={ble.status === "connected" ? "danger" : "success"}
-                onClick={ble.status === "connected" ? ble.disconnect : ble.connect}
-                disabled={ble.status === "connecting"}
-              >
-                {ble.status === "connecting" && <Spinner />}
-                {ble.status === "connected" ? "Disconnect" : "Pair device"}
-              </Button>
-            </div>
-            {!hrLive && (
-              <div className="mt-4">
-                <Field label="Heart rate (bpm) — manual">
-                  <input type="number" min={30} max={220} placeholder="e.g. 72" className={inputCls} value={vitals.heart_rate} onChange={(e) => setVitals({ ...vitals, heart_rate: e.target.value })} />
-                </Field>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-
-      <BitalinoPanel />
-
-      <Card title="Remaining vitals + EEG epoch">
-        <Alert>{error}</Alert>
-        <div className="space-y-4">
-          <Field label="Sample EEG epoch">
-            <select className={inputCls} value={epochType} onChange={(e) => setEpochType(e.target.value)}>
-              <option value="normal">Normal (baseline recording)</option>
-              <option value="seizure">Seizure activity (ictal recording)</option>
-            </select>
-          </Field>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <Field label="SpO₂ (%)">
-              <input type="number" min={70} max={100} step={0.1} placeholder="e.g. 98" className={inputCls} value={vitals.spo2} onChange={(e) => setVitals({ ...vitals, spo2: e.target.value })} />
-            </Field>
-            <Field label="EDA — skin conductance (µS)">
-              <input type="number" min={0.5} max={25} step={0.1} placeholder="e.g. 4.0" className={inputCls} value={vitals.eda} onChange={(e) => setVitals({ ...vitals, eda: e.target.value })} />
-            </Field>
-            <Field label="sEMG — muscle activity RMS (0-1)">
-              <input type="number" min={0} max={1} step={0.01} placeholder="e.g. 0.15" className={inputCls} value={vitals.emg} onChange={(e) => setVitals({ ...vitals, emg: e.target.value })} />
-            </Field>
-            <Field label="Temperature (°C)">
-              <input type="number" min={34} max={42} step={0.1} placeholder="e.g. 36.8" className={inputCls} value={vitals.temperature} onChange={(e) => setVitals({ ...vitals, temperature: e.target.value })} />
-            </Field>
-            <Field label={`Movement intensity (${vitals.movement_level}%)`}>
-              <input type="range" min={0} max={100} className="w-full" value={vitals.movement_level} onChange={(e) => setVitals({ ...vitals, movement_level: e.target.value })} />
-            </Field>
-            <Field label="Jerk (0-1)">
-              <input type="number" min={0} max={1} step={0.01} placeholder="e.g. 0.1" className={inputCls} value={vitals.jerk} onChange={(e) => setVitals({ ...vitals, jerk: e.target.value })} />
-            </Field>
-            <Field label="Rotation rate (°/s)">
-              <input type="number" min={0} max={500} step={1} placeholder="e.g. 20" className={inputCls} value={vitals.rotation_rate} onChange={(e) => setVitals({ ...vitals, rotation_rate: e.target.value })} />
-            </Field>
-          </div>
-          <Button onClick={submit} disabled={busy}>{busy && <Spinner />}Run prediction</Button>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// ---- BITalino (r)evolution BLE: real EDA/sEMG/ACC research sensor board -------
-// Connection, and start/stop acquisition commands, use verified real GATT
-// UUIDs and command bytes (see bitalino.jsx for sources). Per-channel value
-// decoding is NOT yet calibrated/verified, so this intentionally only shows
-// raw frame bytes for hardware validation — it does not feed predictions
-// yet. Once you have the physical board, compare these raw bytes against
-// PLUX's own OpenSignals software (which is guaranteed correct) to confirm
-// the exact per-channel byte offsets, then this can be wired into the
-// vitals submitted above.
-
-const BITALINO_CHANNELS = [
-  { i: 0, label: "A1" }, { i: 1, label: "A2" }, { i: 2, label: "A3" },
-  { i: 3, label: "A4" }, { i: 4, label: "A5" }, { i: 5, label: "A6" },
-];
-
-function BitalinoPanel() {
-  const bit = useBitalino();
-  const [channels, setChannels] = useState([0, 1, 2]); // A1-A3 selected by default
-  const [samplingRate, setSamplingRate] = useState(100);
-
-  if (!bit.supported) return null; // Bluetooth-unsupported browsers already get the message in the HR card above
-
-  const toggleChannel = (i) => {
-    setChannels((cs) => (cs.includes(i) ? cs.filter((c) => c !== i) : [...cs, i].sort()));
-  };
-
-  return (
-    <Card title="BITalino (r)evolution — EDA/sEMG/ACC sensor board (hardware validation)">
-      <details className="text-xs text-slate-500 mb-4 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2" open>
-        <summary className="cursor-pointer font-semibold text-slate-600">What this panel is (and isn't) yet</summary>
-        <div className="mt-2 space-y-1">
-          <p>Real Bluetooth connection and real start/stop acquisition commands, verified against PLUX's own open-source API and an open-source BLE client — this genuinely talks to the board.</p>
-          <p><span className="font-semibold text-amber-700">Not yet wired to predictions:</span> exact per-channel byte decoding (raw bytes → calibrated EDA µS / EMG RMS) isn't independently verified, so raw frames are shown for validation rather than submitted as vitals. Compare against OpenSignals to confirm, then this can be connected through.</p>
-        </div>
-      </details>
-      <Alert>{bit.error}</Alert>
-
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <div>
-          <p className="text-sm font-semibold text-slate-700">
-            {bit.status === "acquiring" ? "Acquiring…" : bit.status === "connected" ? `Connected — ${bit.deviceName}` : bit.status === "connecting" ? "Pairing…" : "Not connected"}
-          </p>
-          {bit.status === "acquiring" && <p className="text-xs text-slate-400 mt-0.5">{bit.frameRate} frames/sec</p>}
-        </div>
-        <div className="flex gap-2">
-          {bit.status === "idle" && <Button variant="success" onClick={bit.connect}>Pair BITalino</Button>}
-          {(bit.status === "connected" || bit.status === "acquiring") && (
-            <>
-              <Button
-                variant={bit.status === "acquiring" ? "danger" : "success"}
-                onClick={bit.status === "acquiring" ? bit.stopAcquisition : () => bit.startAcquisition(channels, samplingRate)}
-                disabled={bit.status === "connected" && channels.length === 0}
-              >
-                {bit.status === "acquiring" ? "Stop acquisition" : "Start acquisition"}
-              </Button>
-              <Button variant="subtle" onClick={bit.disconnect}>Disconnect</Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {(bit.status === "connected" || bit.status === "acquiring") && (
-        <div className="space-y-3">
-          <Field label="Analog channels to acquire">
-            <div className="flex flex-wrap gap-2">
-              {BITALINO_CHANNELS.map((c) => (
-                <button
-                  key={c.i}
-                  type="button"
-                  disabled={bit.status === "acquiring"}
-                  onClick={() => toggleChannel(c.i)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${
-                    channels.includes(c.i) ? "bg-blue-900 text-white border-blue-900" : "bg-white text-slate-600 border-slate-200"
-                  }`}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          </Field>
-          <Field label="Sampling rate (Hz)">
-            <select className={inputCls} value={samplingRate} disabled={bit.status === "acquiring"} onChange={(e) => setSamplingRate(Number(e.target.value))}>
-              <option value={1}>1 Hz</option>
-              <option value={10}>10 Hz</option>
-              <option value={100}>100 Hz</option>
-              <option value={1000}>1000 Hz</option>
-            </select>
-          </Field>
-        </div>
-      )}
-
-      {bit.lastFrame && (
-        <div className="mt-4 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
-          <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Last raw frame ({bit.lastFrame.length} bytes)</p>
-          <p className="text-sm font-mono text-slate-700 break-all">{bit.lastFrame.hex}</p>
-          {bit.lastFrame.seq != null && <p className="text-xs text-slate-400 mt-1">Best-effort sequence nibble: {bit.lastFrame.seq} (unverified)</p>}
-        </div>
-      )}
     </Card>
   );
 }

@@ -66,10 +66,9 @@ router.delete("/linked/:userId", patientOnly, async (req, res) => {
   res.json({ message: "Access revoked." });
 });
 
-// ---- Live Monitoring: manual entry or Bluetooth-device-assisted reading --------
-// The patient (or a paired heart-rate wearable) supplies vitals directly,
-// paired with a sample EEG epoch drawn from the recorded dataset pool (no
-// physical headset here).
+// ---- Live Monitoring: manual entry -----------------------------------------------
+// The patient supplies vitals directly, paired with a sample EEG epoch drawn
+// from the recorded dataset pool (no physical headset here).
 
 const VITALS_RANGE = {
   heart_rate: [30, 220],
@@ -96,8 +95,8 @@ function validateVitals(body) {
 
 router.post("/live/reading", patientOnly, async (req, res) => {
   const { source, epoch_type } = req.body || {};
-  if (!["manual", "device"].includes(source))
-    return res.status(422).json({ detail: "source must be 'manual' or 'device'." });
+  if (source !== "manual")
+    return res.status(422).json({ detail: "source must be 'manual'." });
   if (!["normal", "seizure"].includes(epoch_type))
     return res.status(422).json({ detail: "epoch_type must be 'normal' or 'seizure'." });
 

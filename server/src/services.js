@@ -1,8 +1,8 @@
 // Shared "run one monitoring tick" pipeline: pull an EEG epoch (always drawn
 // from the recorded dataset pool — no physical headset attached in this demo),
-// pair it with vitals (simulated, typed in manually, or read from a paired
-// Bluetooth device), run the AI prediction, persist both, and raise an alert
-// if the risk is high enough — used by the Live Monitoring page.
+// pair it with the patient's manually-entered vitals, run the AI prediction,
+// persist both, and raise an alert if the risk is high enough — used by the
+// Live Monitoring page's manual-entry flow.
 import { mlPredict, mlSimulate } from "./mlClient.js";
 import { Alert, Prediction, SensorReading, User } from "./models.js";
 
@@ -10,15 +10,14 @@ import { Alert, Prediction, SensorReading, User } from "./models.js";
 // but let the demo actually show a pre-ictal/ictal reading now and then.
 const SEIZURE_BIAS_PROBABILITY = 0.16;
 
-// `opts.source`: "simulated" (default) | "manual" | "device"
+// `opts.source`: "manual" (default; the only reachable value today)
 // `opts.vitals`: { heart_rate, spo2, movement_level, temperature, eda, emg,
-//   jerk, rotation_rate } — overrides the simulated vitals when the reading
-//   came from manual entry or a device. EDA/sEMG have no standard Bluetooth
-//   service (unlike heart rate), so they're always simulated or manual.
+//   jerk, rotation_rate } — overrides the simulated defaults with what the
+//   patient typed in.
 // `opts.biasSeizure`: force which half of the epoch pool to draw from (used
-//   when the patient picks a sample EEG epoch type for manual/device entry).
+//   when the patient picks a sample EEG epoch type for manual entry).
 export async function runMonitoringTick(patient, opts = {}) {
-  const source = opts.source || "simulated";
+  const source = opts.source || "manual";
   const biasSeizure = opts.biasSeizure ?? (Math.random() < SEIZURE_BIAS_PROBABILITY);
   const sim = await mlSimulate(biasSeizure);
   const vitals = opts.vitals || {

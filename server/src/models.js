@@ -42,9 +42,10 @@ const sensorReadingSchema = new Schema({
   rotationRate: Number, // IMU gyroscope rotational velocity, deg/s
   // Where the vitals+EEG for this reading came from — the EEG epoch itself is
   // always drawn from the recorded dataset pool (no physical headset attached
-  // in this demo), but vitals may be simulated, typed in by hand, or read
-  // from a paired Bluetooth heart-rate device.
-  source: { type: String, enum: ["simulated", "manual", "device"], default: "simulated" },
+  // in this demo). Only "manual" (typed in by hand) is reachable today;
+  // "simulated"/"device" remain in the enum for historical documents from
+  // earlier iterations of this feature, not because either is still writable.
+  source: { type: String, enum: ["simulated", "manual", "device"], default: "manual" },
 });
 
 // ---- Prediction Table ---------------------------------------------------------
