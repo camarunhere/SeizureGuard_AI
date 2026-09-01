@@ -19,13 +19,27 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import classification_report, precision_recall_fscore_support, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.model import SeizureNet
 from src.preprocessing import prepare_dataset
+
+
+def _metrics(y_test, preds, proba) -> dict:
+    """Real accuracy/precision/recall/F1/ROC-AUC on the held-out test split —
+    for the Model Benchmark page. Precision/recall/F1 use the positive
+    (seizure) class."""
+    precision, recall, f1, _ = precision_recall_fscore_support(y_test, preds, average="binary", zero_division=0)
+    return {
+        "accuracy": round(float((preds == y_test).mean()), 4),
+        "precision": round(float(precision), 4),
+        "recall": round(float(recall), 4),
+        "f1": round(float(f1), 4),
+        "roc_auc": round(float(roc_auc_score(y_test, proba)), 4),
+    }
 
 
 def train_deep_model(X_train, y_train, X_test, y_test, epochs=18, batch_size=64, lr=1e-3):
@@ -59,23 +73,23 @@ def train_deep_model(X_train, y_train, X_test, y_test, epochs=18, batch_size=64,
     with torch.no_grad():
         test_logits = model(torch.tensor(Xs_test))
         test_proba = torch.sigmoid(test_logits).numpy()
-    auc = roc_auc_score(y_test, test_proba)
     preds = (test_proba >= 0.5).astype(int)
-    print(f"\nDeep model (CNN+BiLSTM+Transformer) held-out test ROC-AUC: {auc:.4f}")
+    metrics = _metrics(y_test, preds, test_proba)
+    print(f"\nDeep model (CNN+BiLSTM+Transformer) held-out test ROC-AUC: {metrics['roc_auc']:.4f}")
     print(classification_report(y_test, preds, target_names=["non_seizure", "seizure"]))
 
-    return model, scaler, auc
+    return model, scaler, metrics
 
 
 def train_surrogate(F_train, y_train, F_test, y_test):
     model = GradientBoostingClassifier(random_state=42, n_estimators=250, max_depth=3)
     model.fit(F_train, y_train)
     proba = model.predict_proba(F_test)[:, 1]
-    auc = roc_auc_score(y_test, proba)
     preds = (proba >= 0.5).astype(int)
-    print(f"\nExplainability surrogate (GradientBoosting on EEG features) test ROC-AUC: {auc:.4f}")
+    metrics = _metrics(y_test, preds, proba)
+    print(f"\nExplainability surrogate (GradientBoosting on EEG features) test ROC-AUC: {metrics['roc_auc']:.4f}")
     print(classification_report(y_test, preds, target_names=["non_seizure", "seizure"]))
-    return model, auc
+    return model, metrics
 
 
 def main():
@@ -96,12 +110,12 @@ def main():
     )
 
     print("\n=== Training primary deep model ===")
-    model, scaler, deep_auc = train_deep_model(
+    model, scaler, deep_metrics = train_deep_model(
         X_raw[idx_train], y[idx_train], X_raw[idx_test], y[idx_test], epochs=args.epochs
     )
 
     print("\n=== Training explainability surrogate ===")
-    surrogate, surrogate_auc = train_surrogate(
+    surrogate, surrogate_metrics = train_surrogate(
         X_features.iloc[idx_train], y[idx_train], X_features.iloc[idx_test], y[idx_test]
     )
 
@@ -112,9 +126,11 @@ def main():
 
     metadata = {
         "deep_model": "CNN + BiLSTM + Transformer (PyTorch)",
-        "deep_model_test_auc": round(float(deep_auc), 4),
+        "deep_model_test_auc": deep_metrics["roc_auc"],  # kept for backward compatibility
+        "deep_model_metrics": deep_metrics,
         "surrogate_model": "GradientBoostingClassifier (engineered EEG features)",
-        "surrogate_test_auc": round(float(surrogate_auc), 4),
+        "surrogate_test_auc": surrogate_metrics["roc_auc"],  # kept for backward compatibility
+        "surrogate_metrics": surrogate_metrics,
         "n_train": int(len(idx_train)),
         "n_test": int(len(idx_test)),
         "dataset": "Epileptic Seizure Recognition (Andrzejak et al., Bonn University / UCI)",

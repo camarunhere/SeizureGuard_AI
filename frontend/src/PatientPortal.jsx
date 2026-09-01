@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, useApi } from "./api";
+import { useHeartRateDevice } from "./bluetooth";
+import { useBitalino } from "./bitalino";
 import {
   Alert, Button, Card, CountUp, EEGWaveform, Field, Skeleton, Spinner,
-  TrendChart, RiskBadge, classLabel, fmtDate, inputCls, riskStyle,
+  TrendChart, RiskBadge, RiskFingerprint, classLabel, fmtDate, inputCls, primaryContributors, riskStyle,
 } from "./ui";
 
 export default function PatientPortal({ tab }) {
@@ -11,6 +13,7 @@ export default function PatientPortal({ tab }) {
     case "live": return <LiveMonitoring />;
     case "predictions": return <Predictions />;
     case "xai": return <ExplainableAI />;
+    case "benchmark": return <ModelBenchmark />;
     case "alerts": return <Alerts />;
     case "history": return <History />;
     case "profile": return <Profile />;
@@ -58,16 +61,7 @@ function Dashboard() {
       </Card>
 
       <Card title="Latest vitals">
-        {latest_vitals ? (
-          <div className="grid grid-cols-2 gap-4">
-            <Vital label="Heart rate" value={latest_vitals.heart_rate} unit="bpm" />
-            <Vital label="SpO₂" value={latest_vitals.spo2} unit="%" />
-            <Vital label="Movement" value={Math.round(latest_vitals.movement_level * 100)} unit="%" />
-            <Vital label="Temperature" value={latest_vitals.temperature} unit="°C" />
-          </div>
-        ) : (
-          <p className="text-sm text-slate-400">No vitals recorded yet.</p>
-        )}
+        {latest_vitals ? <VitalsGrid v={latest_vitals} /> : <p className="text-sm text-slate-400">No vitals recorded yet.</p>}
       </Card>
 
       <Card title="Total predictions run">
@@ -92,11 +86,30 @@ function Dashboard() {
   );
 }
 
-function Vital({ label, value, unit }) {
+function Vital({ label, value, unit, decimals }) {
+  const d = decimals ?? (value % 1 !== 0 ? 1 : 0);
   return (
     <div>
       <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="text-xl font-bold text-slate-800"><CountUp value={value} decimals={value % 1 !== 0 ? 1 : 0} /> <span className="text-sm font-medium text-slate-400">{unit}</span></p>
+      <p className="text-xl font-bold text-slate-800"><CountUp value={value} decimals={d} /> <span className="text-sm font-medium text-slate-400">{unit}</span></p>
+    </div>
+  );
+}
+
+// Multimodal vitals grid shared by the Dashboard and Live Monitoring pages —
+// cardiac/respiratory (HR, SpO2), autonomic (EDA), muscular (sEMG), motion
+// (movement/jerk/rotation from the IMU), and temperature.
+function VitalsGrid({ v }) {
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <Vital label="Heart rate" value={v.heart_rate} unit="bpm" />
+      <Vital label="SpO₂" value={v.spo2} unit="%" />
+      <Vital label="EDA (skin conductance)" value={v.eda} unit="µS" decimals={1} />
+      <Vital label="sEMG (muscle RMS)" value={v.emg} unit="" decimals={2} />
+      <Vital label="Movement intensity" value={Math.round((v.movement_level ?? 0) * 100)} unit="%" />
+      <Vital label="Jerk" value={v.jerk} unit="" decimals={2} />
+      <Vital label="Rotation rate" value={v.rotation_rate} unit="°/s" />
+      <Vital label="Temperature" value={v.temperature} unit="°C" decimals={1} />
     </div>
   );
 }
@@ -115,65 +128,58 @@ function AckButton({ path, onDone, small }) {
   );
 }
 
-// ---- Live Monitoring: continuous EEG/wearable stream + AI prediction ----------
+// ---- Live Monitoring: manual entry or paired device ----------------------------
+
+const LIVE_MODES = [
+  { key: "manual", label: "Manual entry" },
+  { key: "device", label: "Connect device" },
+];
 
 function LiveMonitoring() {
-  const [running, setRunning] = useState(false);
-  const [ticking, setTicking] = useState(false);
+  const [mode, setMode] = useState("manual");
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);
-  const [error, setError] = useState("");
-  const timer = useRef(null);
 
-  const tick = async () => {
-    setTicking(true);
-    try {
-      const res = await api("/api/patient/live/tick", { method: "POST" });
-      setLatest(res);
-      setError("");
-      setHistory((h) => [...h.slice(-19), { t: res.prediction.prediction_time, v: res.prediction.risk_probability }]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setTicking(false);
-    }
+  const onResult = (res) => {
+    setLatest(res);
+    setHistory((h) => [...h.slice(-19), { t: res.prediction.prediction_time, v: res.prediction.risk_probability }]);
   };
-
-  useEffect(() => {
-    if (!running) return;
-    tick();
-    timer.current = setInterval(tick, 4000);
-    return () => clearInterval(timer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
 
   const s = latest ? riskStyle(latest.prediction.risk_level) : null;
 
   return (
     <div className="space-y-6">
       <Card>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <p className="font-semibold text-slate-800">Simulated EEG + wearable stream</p>
-            <p className="text-xs text-slate-400 mt-0.5">No physical headset attached — draws real recorded epochs for this demo.</p>
-          </div>
-          <Button variant={running ? "danger" : "success"} onClick={() => setRunning((r) => !r)}>
-            {running ? "Stop monitoring" : "Start monitoring"}
-          </Button>
+        <div className="flex flex-wrap gap-2">
+          {LIVE_MODES.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => setMode(m.key)}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold transition ${
+                mode === m.key ? "bg-blue-900 text-white shadow-md shadow-blue-900/25" : "bg-white/70 border border-slate-200 text-slate-600 hover:bg-white"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
       </Card>
 
-      <Alert>{error}</Alert>
+      {mode === "manual" && <ManualEntry onResult={onResult} />}
+      {mode === "device" && <DeviceEntry onResult={onResult} />}
 
       {latest?.alert_raised && (
-        <Alert kind="error">Elevated risk detected — an alert was sent to your linked caregivers/clinicians.</Alert>
+        <Alert kind="error">
+          Elevated risk detected — recorded as an alert, visible to your linked caregivers/clinicians next time they check
+          (this is an in-app record, not a push/email/SMS notification, unless that's separately configured).
+        </Alert>
       )}
 
       <Card title="Live EEG epoch">
         {latest ? (
           <EEGWaveform signal={latest.reading.eeg_signal} abnormal={latest.prediction.risk_level !== "low"} />
         ) : (
-          <p className="text-sm text-slate-400">{running ? "Waiting for first reading…" : "Start monitoring to see the live signal."}</p>
+          <p className="text-sm text-slate-400">No reading yet — use the controls above to get a live reading.</p>
         )}
       </Card>
 
@@ -192,31 +198,507 @@ function LiveMonitoring() {
           )}
         </Card>
 
-        <Card title="Wearable vitals">
+        <Card title="Vitals">
           {latest ? (
-            <div className="grid grid-cols-2 gap-4">
-              <Vital label="Heart rate" value={latest.reading.heart_rate} unit="bpm" />
-              <Vital label="SpO₂" value={latest.reading.spo2} unit="%" />
-              <Vital label="Movement" value={Math.round(latest.reading.movement_level * 100)} unit="%" />
-              <Vital label="Temperature" value={latest.reading.temperature} unit="°C" />
-            </div>
+            <>
+              <VitalsGrid v={latest.reading} />
+              <p className="text-xs text-slate-400 mt-3 capitalize">Source: {latest.reading.source}</p>
+            </>
           ) : (
             <p className="text-sm text-slate-400">No vitals yet.</p>
           )}
         </Card>
       </div>
 
+      {latest && (
+        <div className="grid sm:grid-cols-2 gap-6">
+          <Card title="Risk fingerprint — contribution by modality">
+            <RiskFingerprint reasons={latest.prediction.reasons} riskProbability={latest.prediction.risk_probability} />
+          </Card>
+          <Card title="Decision support summary">
+            <DecisionSupportSummary prediction={latest.prediction} history={history} />
+          </Card>
+        </div>
+      )}
+
       {history.length > 1 && (
         <Card title="Risk probability (this session)">
           <TrendChart points={history} domain={[0, 1]} format={(v) => `${Math.round(v * 100)}%`} color={s?.bar === "bg-red-600" ? "#dc2626" : "#1e3a8a"} />
         </Card>
       )}
-      {ticking && <p className="text-xs text-slate-400 text-center"><Spinner />Refreshing reading…</p>}
+
+      {latest && (
+        <Card title="Processing pipeline">
+          <p className="text-xs text-slate-400 -mt-2 mb-3">
+            The real stages this reading was processed through, in order. All ran server-side within a single request — this
+            app doesn't stream per-stage progress, so they're shown as completed together rather than ticking live.
+          </p>
+          <PipelineStatus complete />
+        </Card>
+      )}
     </div>
   );
 }
 
+const PIPELINE_STAGES = [
+  "Data Collection — EEG epoch + wearable vitals",
+  "Preprocessing — signal scaling",
+  "Feature Extraction — band power & signal statistics",
+  "Prediction — CNN + BiLSTM + Transformer",
+  "Explainability — SHAP (EEG surrogate) + heuristic severity (vitals)",
+  "Decision Support — risk level & prediction class",
+  "Alert — raised only if risk is above low",
+];
+
+function PipelineStatus({ complete }) {
+  return (
+    <div className="space-y-1.5">
+      {PIPELINE_STAGES.map((stage, i) => (
+        <div key={i} className="flex items-center gap-2 text-sm">
+          <span className={complete ? "text-emerald-600" : "text-slate-300"}>{complete ? "✓" : "○"}</span>
+          <span className={complete ? "text-slate-700" : "text-slate-400"}>{stage}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Risk trend + recommended actions, derived from real data only — no
+ * invented confidence numbers. Trend uses this session's own risk history;
+ * with fewer than 2 points it's simply omitted rather than guessed. */
+function DecisionSupportSummary({ prediction, history }) {
+  const contributors = primaryContributors(prediction.reasons);
+  let trend = null;
+  if (history.length >= 2) {
+    const delta = history[history.length - 1].v - history[0].v;
+    trend = delta > 0.05 ? "Increasing" : delta < -0.05 ? "Decreasing" : "Stable";
+  }
+
+  const actions = {
+    low: ["Continue routine monitoring."],
+    moderate: ["Stay somewhere safe.", "Let a linked caregiver know you're being monitored.", "Continue enhanced monitoring."],
+    high: ["Move to a safe location if possible.", "Alert a linked caregiver/clinician now.", "Follow your seizure action plan."],
+  }[prediction.risk_level] || [];
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="flex justify-between"><span className="text-slate-400">AI risk</span><span className="font-semibold text-slate-700 capitalize">{prediction.risk_level}</span></div>
+      <div className="flex justify-between"><span className="text-slate-400">Probability</span><span className="font-semibold text-slate-700">{(prediction.risk_probability * 100).toFixed(1)}%</span></div>
+      {trend && <div className="flex justify-between"><span className="text-slate-400">Trend (this session)</span><span className="font-semibold text-slate-700">{trend}</span></div>}
+      {contributors.length > 0 && (
+        <div className="flex justify-between gap-3"><span className="text-slate-400 shrink-0">Main contributors</span><span className="font-semibold text-slate-700 text-right">{contributors.join(" + ")}</span></div>
+      )}
+      <div className="pt-2 border-t border-slate-100">
+        <p className="text-xs uppercase tracking-wide text-slate-400 mb-1.5">Suggested response (decision support, not diagnosis)</p>
+        <ul className="space-y-1 list-disc list-inside text-slate-600">
+          {actions.map((a, i) => <li key={i}>{a}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+
+// ---- Manual entry: patient types in vitals, picks a sample EEG epoch type -----
+// EDA/sEMG have no standard Bluetooth profile (unlike heart rate), so these
+// fields are always manual/simulated — see DeviceEntry below and bluetooth.jsx.
+
+// Every field starts genuinely blank — no pre-filled "typical" values that
+// could get silently submitted without the patient actually entering a real
+// reading. Placeholders only hint at the expected magnitude/units; they are
+// not values and are never sent. Movement is the one exception: it's a
+// slider (HTML range inputs can't be "empty"), so it starts at its natural
+// floor of 0% rather than an assumed value.
+const EMPTY_VITALS = {
+  heart_rate: "", spo2: "", movement_level: "0", temperature: "",
+  eda: "", emg: "", jerk: "", rotation_rate: "",
+};
+
+function VitalsFields({ vitals, setVitals }) {
+  const set = (k) => (e) => setVitals({ ...vitals, [k]: e.target.value });
+  return (
+    <div className="grid sm:grid-cols-2 gap-4">
+      <Field label="Heart rate (bpm)">
+        <input type="number" min={30} max={220} required placeholder="e.g. 72" className={inputCls} value={vitals.heart_rate} onChange={set("heart_rate")} />
+      </Field>
+      <Field label="SpO₂ (%)">
+        <input type="number" min={70} max={100} step={0.1} required placeholder="e.g. 98" className={inputCls} value={vitals.spo2} onChange={set("spo2")} />
+      </Field>
+      <Field label="EDA — skin conductance (µS)">
+        <input type="number" min={0.5} max={25} step={0.1} required placeholder="e.g. 4.0" className={inputCls} value={vitals.eda} onChange={set("eda")} />
+      </Field>
+      <Field label="sEMG — muscle activity RMS (0-1)">
+        <input type="number" min={0} max={1} step={0.01} required placeholder="e.g. 0.15" className={inputCls} value={vitals.emg} onChange={set("emg")} />
+      </Field>
+      <Field label={`Movement intensity (${vitals.movement_level}%)`}>
+        <input type="range" min={0} max={100} className="w-full" value={vitals.movement_level} onChange={set("movement_level")} />
+      </Field>
+      <Field label="Jerk — motion smoothness (0-1)">
+        <input type="number" min={0} max={1} step={0.01} required placeholder="e.g. 0.1" className={inputCls} value={vitals.jerk} onChange={set("jerk")} />
+      </Field>
+      <Field label="Rotation rate (°/s)">
+        <input type="number" min={0} max={500} step={1} required placeholder="e.g. 20" className={inputCls} value={vitals.rotation_rate} onChange={set("rotation_rate")} />
+      </Field>
+      <Field label="Temperature (°C)">
+        <input type="number" min={34} max={42} step={0.1} required placeholder="e.g. 36.8" className={inputCls} value={vitals.temperature} onChange={set("temperature")} />
+      </Field>
+    </div>
+  );
+}
+
+function ManualEntry({ onResult }) {
+  const [vitals, setVitals] = useState(EMPTY_VITALS);
+  const [epochType, setEpochType] = useState("normal");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      const res = await api("/api/patient/live/reading", {
+        method: "POST",
+        body: {
+          source: "manual",
+          epoch_type: epochType,
+          heart_rate: Number(vitals.heart_rate),
+          spo2: Number(vitals.spo2),
+          movement_level: Number(vitals.movement_level) / 100,
+          temperature: Number(vitals.temperature),
+          eda: Number(vitals.eda),
+          emg: Number(vitals.emg),
+          jerk: Number(vitals.jerk),
+          rotation_rate: Number(vitals.rotation_rate),
+        },
+      });
+      onResult(res);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Enter a reading manually">
+      <p className="text-xs text-slate-400 -mt-2 mb-4">
+        No wearable handy? Type in cardiac, autonomic (EDA), muscular (sEMG), and motion vitals from a manual check, pick a
+        sample EEG epoch — the AI still runs a real prediction on it.
+      </p>
+      <Alert>{error}</Alert>
+      <form onSubmit={submit} className="space-y-4">
+        <Field label="Sample EEG epoch">
+          <select className={inputCls} value={epochType} onChange={(e) => setEpochType(e.target.value)}>
+            <option value="normal">Normal (baseline recording)</option>
+            <option value="seizure">Seizure activity (ictal recording)</option>
+          </select>
+        </Field>
+        <VitalsFields vitals={vitals} setVitals={setVitals} />
+        <Button type="submit" disabled={busy}>{busy && <Spinner />}Run prediction</Button>
+      </form>
+    </Card>
+  );
+}
+
+// ---- Connect device: real Bluetooth heart-rate pairing -------------------------
+// Connection is owned by BluetoothProvider (see App.jsx), not this component,
+// so pairing survives switching Live Monitoring modes or navigating away and
+// back — see frontend/src/bluetooth.jsx for why that matters here.
+//
+// Heart rate independently uses the live BLE reading when available and
+// falls back to the manual field otherwise.
+
+function DeviceEntry({ onResult }) {
+  const ble = useHeartRateDevice();
+  const [vitals, setVitals] = useState(EMPTY_VITALS);
+  const [epochType, setEpochType] = useState("normal");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const hrUntrusted = ble.contactOk === false || ble.isStale;
+  const hrLive = ble.status === "connected" && ble.heartRate != null && !hrUntrusted;
+
+  const submit = async () => {
+    setError("");
+    // Fields with no live source are always manual here; heart rate only
+    // needs a manual value when the BLE reading isn't live/trusted. There's
+    // no <form> around this panel (submission isn't a form event), so
+    // required-field checking has to happen here rather than via HTML5
+    // `required` alone.
+    const manualRequired = { spo2: "SpO₂", eda: "EDA", emg: "sEMG", temperature: "Temperature", jerk: "Jerk", rotation_rate: "Rotation rate" };
+    if (!hrLive) manualRequired.heart_rate = "Heart rate";
+    const missing = Object.entries(manualRequired).filter(([k]) => vitals[k].trim() === "").map(([, label]) => label);
+    if (missing.length) {
+      setError(`Enter a value for: ${missing.join(", ")}.`);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await api("/api/patient/live/reading", {
+        method: "POST",
+        body: {
+          source: "device",
+          epoch_type: epochType,
+          heart_rate: hrLive ? ble.heartRate : Number(vitals.heart_rate),
+          spo2: Number(vitals.spo2),
+          temperature: Number(vitals.temperature),
+          eda: Number(vitals.eda),
+          emg: Number(vitals.emg),
+          movement_level: Number(vitals.movement_level) / 100,
+          jerk: Number(vitals.jerk),
+          rotation_rate: Number(vitals.rotation_rate),
+        },
+      });
+      onResult(res);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card title="Heart rate — Bluetooth device">
+        {!ble.supported ? (
+          <Alert kind="info">
+            Web Bluetooth isn't supported in this browser. Try Chrome or Edge on desktop or Android — Safari and iOS don't
+            support pairing Bluetooth devices from the browser. Enter heart rate manually below instead.
+          </Alert>
+        ) : (
+          <>
+            <details className="text-xs text-slate-500 mb-4 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+              <summary className="cursor-pointer font-semibold text-slate-600">Which devices actually work here?</summary>
+              <div className="mt-2 space-y-2">
+                <p>
+                  <span className="font-semibold text-emerald-700">Works:</span> any device implementing the open Bluetooth
+                  Heart Rate standard — chest straps (Polar H9/H10, Wahoo TICKR, Garmin HRM-Dual/Pro, Movesense) and watches
+                  with an explicit "broadcast heart rate" mode (Garmin: Settings → Sensors → Heart Rate; also some Polar,
+                  Suunto, Coros models).
+                </p>
+                <p>
+                  <span className="font-semibold text-red-600">Won't work:</span> most budget fitness watches (boAt, Noise,
+                  Fire-Boltt, Mi Band) and Apple Watch / Wear OS / Samsung Galaxy Watch — they sync heart rate only with
+                  their own app over a closed protocol. This is a restriction built into Bluetooth security on every
+                  browser, not something any website can work around. Use the manual field below for these instead.
+                </p>
+                <p>
+                  <span className="font-semibold text-amber-700">EDA / sEMG:</span> there's no Bluetooth SIG standard for
+                  electrodermal activity or surface EMG at all (unlike heart rate), so no device can be paired for those
+                  regardless of brand — always manual, below.
+                </p>
+              </div>
+            </details>
+            <Alert>{ble.error}</Alert>
+            {ble.contactOk === false && <Alert kind="info">Sensor contact lost — reposition the strap/watch against skin. Falling back to the manual field until contact is re-established.</Alert>}
+            {ble.isStale && ble.contactOk !== false && <Alert kind="info">No new reading in a while — the connection may have dropped. Reconnecting automatically…</Alert>}
+
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                {ble.status === "connected" ? (
+                  <>
+                    <p className="text-sm font-semibold text-emerald-700">Connected — {ble.deviceName}</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-1">
+                      {ble.heartRate != null ? (
+                        <>{ble.heartRate} <span className="text-sm font-medium text-slate-400">bpm</span></>
+                      ) : (
+                        <span className="text-sm font-normal text-slate-400">Waiting for a reading…</span>
+                      )}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-400">{ble.status === "connecting" ? "Pairing…" : "No device connected — enter heart rate manually below."}</p>
+                )}
+              </div>
+              <Button
+                variant={ble.status === "connected" ? "danger" : "success"}
+                onClick={ble.status === "connected" ? ble.disconnect : ble.connect}
+                disabled={ble.status === "connecting"}
+              >
+                {ble.status === "connecting" && <Spinner />}
+                {ble.status === "connected" ? "Disconnect" : "Pair device"}
+              </Button>
+            </div>
+            {!hrLive && (
+              <div className="mt-4">
+                <Field label="Heart rate (bpm) — manual">
+                  <input type="number" min={30} max={220} placeholder="e.g. 72" className={inputCls} value={vitals.heart_rate} onChange={(e) => setVitals({ ...vitals, heart_rate: e.target.value })} />
+                </Field>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+
+      <BitalinoPanel />
+
+      <Card title="Remaining vitals + EEG epoch">
+        <Alert>{error}</Alert>
+        <div className="space-y-4">
+          <Field label="Sample EEG epoch">
+            <select className={inputCls} value={epochType} onChange={(e) => setEpochType(e.target.value)}>
+              <option value="normal">Normal (baseline recording)</option>
+              <option value="seizure">Seizure activity (ictal recording)</option>
+            </select>
+          </Field>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="SpO₂ (%)">
+              <input type="number" min={70} max={100} step={0.1} placeholder="e.g. 98" className={inputCls} value={vitals.spo2} onChange={(e) => setVitals({ ...vitals, spo2: e.target.value })} />
+            </Field>
+            <Field label="EDA — skin conductance (µS)">
+              <input type="number" min={0.5} max={25} step={0.1} placeholder="e.g. 4.0" className={inputCls} value={vitals.eda} onChange={(e) => setVitals({ ...vitals, eda: e.target.value })} />
+            </Field>
+            <Field label="sEMG — muscle activity RMS (0-1)">
+              <input type="number" min={0} max={1} step={0.01} placeholder="e.g. 0.15" className={inputCls} value={vitals.emg} onChange={(e) => setVitals({ ...vitals, emg: e.target.value })} />
+            </Field>
+            <Field label="Temperature (°C)">
+              <input type="number" min={34} max={42} step={0.1} placeholder="e.g. 36.8" className={inputCls} value={vitals.temperature} onChange={(e) => setVitals({ ...vitals, temperature: e.target.value })} />
+            </Field>
+            <Field label={`Movement intensity (${vitals.movement_level}%)`}>
+              <input type="range" min={0} max={100} className="w-full" value={vitals.movement_level} onChange={(e) => setVitals({ ...vitals, movement_level: e.target.value })} />
+            </Field>
+            <Field label="Jerk (0-1)">
+              <input type="number" min={0} max={1} step={0.01} placeholder="e.g. 0.1" className={inputCls} value={vitals.jerk} onChange={(e) => setVitals({ ...vitals, jerk: e.target.value })} />
+            </Field>
+            <Field label="Rotation rate (°/s)">
+              <input type="number" min={0} max={500} step={1} placeholder="e.g. 20" className={inputCls} value={vitals.rotation_rate} onChange={(e) => setVitals({ ...vitals, rotation_rate: e.target.value })} />
+            </Field>
+          </div>
+          <Button onClick={submit} disabled={busy}>{busy && <Spinner />}Run prediction</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---- BITalino (r)evolution BLE: real EDA/sEMG/ACC research sensor board -------
+// Connection, and start/stop acquisition commands, use verified real GATT
+// UUIDs and command bytes (see bitalino.jsx for sources). Per-channel value
+// decoding is NOT yet calibrated/verified, so this intentionally only shows
+// raw frame bytes for hardware validation — it does not feed predictions
+// yet. Once you have the physical board, compare these raw bytes against
+// PLUX's own OpenSignals software (which is guaranteed correct) to confirm
+// the exact per-channel byte offsets, then this can be wired into the
+// vitals submitted above.
+
+const BITALINO_CHANNELS = [
+  { i: 0, label: "A1" }, { i: 1, label: "A2" }, { i: 2, label: "A3" },
+  { i: 3, label: "A4" }, { i: 4, label: "A5" }, { i: 5, label: "A6" },
+];
+
+function BitalinoPanel() {
+  const bit = useBitalino();
+  const [channels, setChannels] = useState([0, 1, 2]); // A1-A3 selected by default
+  const [samplingRate, setSamplingRate] = useState(100);
+
+  if (!bit.supported) return null; // Bluetooth-unsupported browsers already get the message in the HR card above
+
+  const toggleChannel = (i) => {
+    setChannels((cs) => (cs.includes(i) ? cs.filter((c) => c !== i) : [...cs, i].sort()));
+  };
+
+  return (
+    <Card title="BITalino (r)evolution — EDA/sEMG/ACC sensor board (hardware validation)">
+      <details className="text-xs text-slate-500 mb-4 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2" open>
+        <summary className="cursor-pointer font-semibold text-slate-600">What this panel is (and isn't) yet</summary>
+        <div className="mt-2 space-y-1">
+          <p>Real Bluetooth connection and real start/stop acquisition commands, verified against PLUX's own open-source API and an open-source BLE client — this genuinely talks to the board.</p>
+          <p><span className="font-semibold text-amber-700">Not yet wired to predictions:</span> exact per-channel byte decoding (raw bytes → calibrated EDA µS / EMG RMS) isn't independently verified, so raw frames are shown for validation rather than submitted as vitals. Compare against OpenSignals to confirm, then this can be connected through.</p>
+        </div>
+      </details>
+      <Alert>{bit.error}</Alert>
+
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div>
+          <p className="text-sm font-semibold text-slate-700">
+            {bit.status === "acquiring" ? "Acquiring…" : bit.status === "connected" ? `Connected — ${bit.deviceName}` : bit.status === "connecting" ? "Pairing…" : "Not connected"}
+          </p>
+          {bit.status === "acquiring" && <p className="text-xs text-slate-400 mt-0.5">{bit.frameRate} frames/sec</p>}
+        </div>
+        <div className="flex gap-2">
+          {bit.status === "idle" && <Button variant="success" onClick={bit.connect}>Pair BITalino</Button>}
+          {(bit.status === "connected" || bit.status === "acquiring") && (
+            <>
+              <Button
+                variant={bit.status === "acquiring" ? "danger" : "success"}
+                onClick={bit.status === "acquiring" ? bit.stopAcquisition : () => bit.startAcquisition(channels, samplingRate)}
+                disabled={bit.status === "connected" && channels.length === 0}
+              >
+                {bit.status === "acquiring" ? "Stop acquisition" : "Start acquisition"}
+              </Button>
+              <Button variant="subtle" onClick={bit.disconnect}>Disconnect</Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {(bit.status === "connected" || bit.status === "acquiring") && (
+        <div className="space-y-3">
+          <Field label="Analog channels to acquire">
+            <div className="flex flex-wrap gap-2">
+              {BITALINO_CHANNELS.map((c) => (
+                <button
+                  key={c.i}
+                  type="button"
+                  disabled={bit.status === "acquiring"}
+                  onClick={() => toggleChannel(c.i)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${
+                    channels.includes(c.i) ? "bg-blue-900 text-white border-blue-900" : "bg-white text-slate-600 border-slate-200"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Sampling rate (Hz)">
+            <select className={inputCls} value={samplingRate} disabled={bit.status === "acquiring"} onChange={(e) => setSamplingRate(Number(e.target.value))}>
+              <option value={1}>1 Hz</option>
+              <option value={10}>10 Hz</option>
+              <option value={100}>100 Hz</option>
+              <option value={1000}>1000 Hz</option>
+            </select>
+          </Field>
+        </div>
+      )}
+
+      {bit.lastFrame && (
+        <div className="mt-4 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+          <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Last raw frame ({bit.lastFrame.length} bytes)</p>
+          <p className="text-sm font-mono text-slate-700 break-all">{bit.lastFrame.hex}</p>
+          {bit.lastFrame.seq != null && <p className="text-xs text-slate-400 mt-1">Best-effort sequence nibble: {bit.lastFrame.seq} (unverified)</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ---- AI Prediction Dashboard ----------------------------------------------------
+
+/** Risk trend/change/stability from real prediction history — omitted (not
+ * guessed) when there's too little data to say anything meaningful. `data`
+ * is newest-first, as returned by the API. */
+function riskTimelineStats(data) {
+  if (data.length < 2) return null;
+  const n = Math.min(5, Math.floor(data.length / 2));
+  const recent = data.slice(0, n).map((p) => p.risk_probability);
+  const baseline = data.slice(-n).map((p) => p.risk_probability);
+  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const recentAvg = avg(recent);
+  const baselineAvg = avg(baseline);
+  const delta = recentAvg - baselineAvg;
+  const trend = delta > 0.05 ? "Increasing" : delta < -0.05 ? "Decreasing" : "Stable";
+
+  const all = data.map((p) => p.risk_probability);
+  const mean = avg(all);
+  const variance = avg(all.map((v) => (v - mean) ** 2));
+  const std = Math.sqrt(variance);
+  const stability = std < 0.1 ? "Good" : std < 0.25 ? "Moderate" : "Volatile";
+
+  return { trend, deltaPct: delta * 100, stability };
+}
 
 function Predictions() {
   const { data, loading, error } = useApi("/api/patient/predictions?limit=50");
@@ -225,11 +707,19 @@ function Predictions() {
   if (!data.length) return <Card><p className="text-sm text-slate-400">No AI predictions yet — visit Live Monitoring to generate one.</p></Card>;
 
   const chartPoints = [...data].reverse().map((p) => ({ t: p.prediction_time, v: p.risk_probability }));
+  const stats = riskTimelineStats(data);
 
   return (
     <div className="space-y-6">
       <Card title="Risk probability over time">
         <TrendChart points={chartPoints} domain={[0, 1]} format={(v) => `${Math.round(v * 100)}%`} />
+        {stats && (
+          <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 text-sm">
+            <div><p className="text-xs uppercase tracking-wide text-slate-400">Risk trend</p><p className="font-semibold text-slate-700">{stats.trend}</p></div>
+            <div><p className="text-xs uppercase tracking-wide text-slate-400">Change (recent vs earlier)</p><p className="font-semibold text-slate-700">{stats.deltaPct >= 0 ? "+" : ""}{stats.deltaPct.toFixed(1)}%</p></div>
+            <div><p className="text-xs uppercase tracking-wide text-slate-400">Risk stability</p><p className="font-semibold text-slate-700">{stats.stability}</p></div>
+          </div>
+        )}
       </Card>
       <Card title={`Prediction log (${data.length})`}>
         <div className="space-y-2 max-h-[28rem] overflow-y-auto">
@@ -281,35 +771,48 @@ function ExplainableAI() {
         </select>
       </Card>
 
-      <Card title="Why the AI made this prediction">
-        <RiskBadge level={prediction.risk_level} probability={prediction.risk_probability} />
-        {prediction.clinician_note && (
-          <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-sm text-blue-800">
-            <span className="font-semibold">Clinician note:</span> {prediction.clinician_note}
+      <div className="grid sm:grid-cols-2 gap-6">
+        <Card title="Risk fingerprint — contribution by modality">
+          <RiskFingerprint reasons={prediction.reasons} riskProbability={prediction.risk_probability} />
+        </Card>
+
+        <Card title="Why the AI made this prediction">
+          <RiskBadge level={prediction.risk_level} probability={prediction.risk_probability} />
+          {prediction.clinician_note && (
+            <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-sm text-blue-800">
+              <span className="font-semibold">Clinician note:</span> {prediction.clinician_note}
+            </div>
+          )}
+          <div className="mt-4 space-y-3">
+            {prediction.reasons.length === 0 && <p className="text-sm text-slate-400">No contributing factors recorded.</p>}
+            {prediction.reasons.map((r, i) => {
+              const pct = (Math.abs(r.shap_contribution) / maxContribution) * 100;
+              const up = r.direction === "increases" || r.shap_contribution > 0;
+              return (
+                <div key={i}>
+                  <div className="flex items-center gap-2 text-sm mb-1">
+                    <span className="text-xs font-mono text-slate-400 w-5 shrink-0">{String(i + 1).padStart(2, "0")}</span>
+                    <span className="font-medium text-slate-700 flex-1">{r.factor}</span>
+                    <span className={`text-xs font-semibold shrink-0 ${up ? "text-red-600" : "text-emerald-600"}`}>
+                      {up ? "↑ increases risk" : "↓ decreases risk"}
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100 overflow-hidden ml-7">
+                    <div className={`h-full rounded-full ${up ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5 ml-7 capitalize">{r.source}</p>
+                </div>
+              );
+            })}
+            {prediction.reasons.length > 0 && (
+              <p className="text-xs text-slate-500 pt-2 border-t border-slate-100">
+                <span className="font-semibold text-slate-600">Primary contributors: </span>
+                {primaryContributors(prediction.reasons).join(" + ")}
+              </p>
+            )}
           </div>
-        )}
-        <div className="mt-4 space-y-3">
-          {prediction.reasons.length === 0 && <p className="text-sm text-slate-400">No contributing factors recorded.</p>}
-          {prediction.reasons.map((r, i) => {
-            const pct = (Math.abs(r.shap_contribution) / maxContribution) * 100;
-            const up = r.direction === "increases" || r.shap_contribution > 0;
-            return (
-              <div key={i}>
-                <div className="flex items-center justify-between text-sm mb-1">
-                  <span className="font-medium text-slate-700">{r.factor}</span>
-                  <span className={`text-xs font-semibold ${up ? "text-red-600" : "text-emerald-600"}`}>
-                    {up ? "↑ increases risk" : "↓ decreases risk"}
-                  </span>
-                </div>
-                <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div className={`h-full rounded-full ${up ? "bg-red-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
-                </div>
-                <p className="text-xs text-slate-400 mt-0.5 capitalize">{r.source}</p>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+        </Card>
+      </div>
 
       <Card title="EEG-derived features">
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -325,6 +828,82 @@ function ExplainableAI() {
   );
 }
 
+// ---- Model Benchmark ---------------------------------------------------------------
+// Real numbers only, from models/metadata.json (written by src/train.py after
+// an actual training run) — never invented. Rows for model variants that
+// were never actually trained here (plain CNN, plain BiLSTM, CNN-BiLSTM
+// without the Transformer) are left blank rather than guessed; the only
+// baseline genuinely trained in this codebase is the GradientBoosting
+// surrogate used for explainability, not XGBoost.
+
+const BENCHMARK_ROWS = [
+  { key: "gb_surrogate", label: "Gradient Boosting (explainability surrogate)", metaKey: "surrogate" },
+  { key: "cnn", label: "CNN only", metaKey: null },
+  { key: "bilstm", label: "BiLSTM only", metaKey: null },
+  { key: "cnn_bilstm", label: "CNN + BiLSTM (no Transformer)", metaKey: null },
+  { key: "full", label: "CNN + BiLSTM + Transformer (deployed model)", metaKey: "deep_model" },
+];
+
+function fmtMetric(v) { return v == null ? "—" : `${(v * 100).toFixed(1)}%`; }
+
+function ModelBenchmark() {
+  const { data, loading, error } = useApi("/api/patient/model-info");
+  if (loading) return <Card><Skeleton lines={5} /></Card>;
+  if (error) return <Alert>{error}</Alert>;
+
+  const metricsFor = (metaKey) => {
+    if (metaKey === "deep_model") return data.deep_model_metrics || { roc_auc: data.deep_model_test_auc };
+    if (metaKey === "surrogate") return data.surrogate_metrics || { roc_auc: data.surrogate_test_auc };
+    return null;
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card title="AI model benchmark">
+        <p className="text-xs text-slate-400 -mt-2 mb-4">
+          Real held-out test results from the actual training run ({data.n_train} train / {data.n_test} test epochs,{" "}
+          {data.dataset}). Rows for model variants never actually trained in this project are left blank rather than
+          estimated — this table reflects what has genuinely been run, not a projection.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                <th className="py-2 pr-3">Model</th>
+                <th className="py-2 px-3 text-right">Accuracy</th>
+                <th className="py-2 px-3 text-right">Precision</th>
+                <th className="py-2 px-3 text-right">Recall</th>
+                <th className="py-2 px-3 text-right">F1</th>
+                <th className="py-2 pl-3 text-right">ROC-AUC</th>
+              </tr>
+            </thead>
+            <tbody>
+              {BENCHMARK_ROWS.map((row) => {
+                const m = metricsFor(row.metaKey);
+                const isFull = row.key === "full";
+                return (
+                  <tr key={row.key} className={`border-b border-slate-50 last:border-0 ${isFull ? "font-semibold text-slate-800" : "text-slate-600"}`}>
+                    <td className="py-2 pr-3">{row.label}</td>
+                    <td className="py-2 px-3 text-right">{fmtMetric(m?.accuracy)}</td>
+                    <td className="py-2 px-3 text-right">{fmtMetric(m?.precision)}</td>
+                    <td className="py-2 px-3 text-right">{fmtMetric(m?.recall)}</td>
+                    <td className="py-2 px-3 text-right">{fmtMetric(m?.f1)}</td>
+                    <td className="py-2 pl-3 text-right">{fmtMetric(m?.roc_auc)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-slate-400 mt-4">
+          Accuracy/precision/recall/F1 for the two trained models will populate the next time <code>python -m src.train</code>{" "}
+          is run (this session's model artifacts predate that metric being persisted) — ROC-AUC above is already real either way.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
 // ---- Emergency Alerts -------------------------------------------------------------
 
 function Alerts() {
@@ -335,20 +914,39 @@ function Alerts() {
 
   return (
     <Card title={`Alerts (${data.length})`}>
-      <div className="space-y-2">
-        {data.map((a) => (
-          <div key={a.id} className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 border ${a.acknowledged ? "border-slate-100 bg-slate-50" : "border-red-200 bg-red-50"}`}>
-            <div>
-              <p className="text-sm font-semibold text-slate-700">
-                {a.alert_type === "seizure_detected" ? "🚨 Seizure detected" : "⚠️ Elevated seizure risk"}
+      <div className="space-y-3">
+        {data.map((a) => {
+          const contributors = primaryContributors(a.reasons);
+          const visibleTo = [
+            a.notified_caregivers > 0 && `${a.notified_caregivers} caregiver${a.notified_caregivers > 1 ? "s" : ""}`,
+            a.notified_clinicians > 0 && `${a.notified_clinicians} clinician${a.notified_clinicians > 1 ? "s" : ""}`,
+          ].filter(Boolean).join(", ");
+          return (
+            <div key={a.id} className={`rounded-xl px-4 py-3 border ${a.acknowledged ? "border-slate-100 bg-slate-50" : "border-red-200 bg-red-50"}`}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {a.alert_type === "seizure_detected" ? "🚨 Seizure detected" : "⚠️ Elevated seizure risk"}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">{fmtDate(a.created_at)} · {(a.risk_probability * 100).toFixed(0)}% probability{a.prediction_class ? ` · ${classLabel(a.prediction_class)}` : ""}</p>
+                </div>
+                {a.acknowledged
+                  ? <span className="text-xs font-semibold text-slate-400 shrink-0">Acknowledged</span>
+                  : <AckButton path={`/api/patient/alerts/${a.id}/acknowledge`} onDone={reload} small />}
+              </div>
+              {contributors.length > 0 && (
+                <p className="text-xs text-slate-500 mt-2">
+                  <span className="font-semibold">Primary signals:</span> {contributors.join(" + ")}
+                </p>
+              )}
+              <p className="text-xs text-slate-400 mt-1">
+                {visibleTo
+                  ? `Recorded — visible in-app to ${visibleTo} (not a push/email/SMS notification unless separately configured)`
+                  : "Recorded — no caregiver or clinician currently linked to see it"}
               </p>
-              <p className="text-xs text-slate-400 mt-0.5">{fmtDate(a.created_at)} · {(a.risk_probability * 100).toFixed(0)}% probability</p>
             </div>
-            {a.acknowledged
-              ? <span className="text-xs font-semibold text-slate-400">Acknowledged</span>
-              : <AckButton path={`/api/patient/alerts/${a.id}/acknowledge`} onDone={reload} small />}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -463,7 +1061,7 @@ function Profile() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (data && !form) setForm({ full_name: data.full_name, age: data.age ?? "", medical_history: data.medical_history, baseline_heart_rate: data.baseline_heart_rate });
+    if (data && !form) setForm({ full_name: data.full_name, age: data.age ?? "", medical_history: data.medical_history, baseline_heart_rate: data.baseline_heart_rate, baseline_eda: data.baseline_eda });
   }, [data, form]);
 
   if (loading || !form) return <Card><Skeleton lines={4} /></Card>;
@@ -478,7 +1076,10 @@ function Profile() {
     try {
       await api("/api/patient/profile", {
         method: "PUT",
-        body: { full_name: form.full_name, age: form.age ? Number(form.age) : null, medical_history: form.medical_history, baseline_heart_rate: Number(form.baseline_heart_rate) },
+        body: {
+          full_name: form.full_name, age: form.age ? Number(form.age) : null, medical_history: form.medical_history,
+          baseline_heart_rate: Number(form.baseline_heart_rate), baseline_eda: Number(form.baseline_eda),
+        },
       });
       reload();
     } catch (err) {
@@ -522,6 +1123,9 @@ function Profile() {
           </Field>
           <Field label="Baseline heart rate (bpm)">
             <input type="number" min={30} max={150} className={inputCls} value={form.baseline_heart_rate} onChange={set("baseline_heart_rate")} />
+          </Field>
+          <Field label="Baseline EDA — resting skin conductance (µS)">
+            <input type="number" min={0.5} max={25} step={0.1} className={inputCls} value={form.baseline_eda} onChange={set("baseline_eda")} />
           </Field>
           <div className="sm:col-span-2">
             <Field label="Medical history">

@@ -23,8 +23,11 @@ async function isUp() {
 
 function pythonBin() {
   if (process.env.ML_PYTHON) return process.env.ML_PYTHON;
-  const venv = path.join(REPO_ROOT, ".venv", "bin", "python");
-  return existsSync(venv) ? venv : "python3";
+  const venvUnix = path.join(REPO_ROOT, ".venv", "bin", "python");
+  if (existsSync(venvUnix)) return venvUnix;
+  const venvWindows = path.join(REPO_ROOT, ".venv", "Scripts", "python.exe");
+  if (existsSync(venvWindows)) return venvWindows;
+  return process.platform === "win32" ? "python" : "python3";
 }
 
 export async function ensureMlService() {

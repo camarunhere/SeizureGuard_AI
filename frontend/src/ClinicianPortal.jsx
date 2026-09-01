@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, useApi } from "./api";
-import { Alert, Button, Card, Field, Skeleton, Spinner, classLabel, fmtDate, inputCls, RiskBadge } from "./ui";
+import { Alert, Button, Card, Field, Skeleton, Spinner, classLabel, fmtDate, inputCls, primaryContributors, RiskBadge, RiskFingerprint } from "./ui";
 
 export default function ClinicianPortal() {
   const { data, loading, error, reload } = useApi("/api/clinician/patients");
@@ -100,9 +100,11 @@ function PatientReview({ patientId, onUnlink }) {
           <div><p className="text-xs uppercase tracking-wide text-slate-400">Medical history</p><p className="font-medium text-slate-700">{patient.medical_history || "—"}</p></div>
         </div>
         {latest_vitals && (
-          <div className="grid grid-cols-4 gap-4 text-sm mt-4 pt-4 border-t border-slate-100">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 text-sm mt-4 pt-4 border-t border-slate-100">
             <span>HR: <b>{latest_vitals.heart_rate} bpm</b></span>
             <span>SpO₂: <b>{latest_vitals.spo2}%</b></span>
+            <span>EDA: <b>{latest_vitals.eda} µS</b></span>
+            <span>sEMG: <b>{latest_vitals.emg}</b></span>
             <span>Movement: <b>{Math.round(latest_vitals.movement_level * 100)}%</b></span>
             <span>Temp: <b>{latest_vitals.temperature}°C</b></span>
           </div>
@@ -220,6 +222,11 @@ function AiReport({ patientId, predictionId, onClose }) {
             </div>
 
             <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Risk fingerprint — contribution by modality</p>
+              <RiskFingerprint reasons={data.xai_explanation} riskProbability={data.prediction_summary.risk_probability} />
+            </div>
+
+            <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Important biomarkers</p>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 {Object.entries(data.important_biomarkers || {}).map(([k, v]) => (
@@ -240,6 +247,19 @@ function AiReport({ patientId, predictionId, onClose }) {
                   </li>
                 ))}
               </ul>
+              {data.xai_explanation.length > 0 && (
+                <p className="text-xs text-slate-500 mt-2 pt-2 border-t border-slate-100">
+                  <span className="font-semibold">Primary contributors:</span> {primaryContributors(data.xai_explanation).join(" + ")}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">AI model</p>
+              <div className="text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2 space-y-0.5">
+                <p><span className="text-slate-400">Model:</span> CNN + BiLSTM + Transformer (PyTorch)</p>
+                <p><span className="text-slate-400">Explainability surrogate:</span> Gradient Boosting on engineered EEG features (SHAP)</p>
+              </div>
             </div>
 
             <div>

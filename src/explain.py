@@ -35,50 +35,82 @@ def explain_eeg(surrogate, feature_row, feature_names, top_n: int = 4) -> list[d
             "shap_contribution": round(float(v), 4),
             "direction": "increases_risk" if v > 0 else "decreases_risk",
             "source": "eeg",
+            "modality": "eeg",
         }
         for name, v in ranked
         if abs(v) > 1e-4
     ]
 
 
+def _vitals_reason(factor: str, severity: float, modality: str) -> dict:
+    """severity: heuristic 0-1 magnitude (how far past the trigger threshold) —
+    NOT a SHAP value. Reused under the `shap_contribution` key so the frontend
+    can rank/scale all reasons uniformly, but this is a rule-based severity
+    score, not a trained model's attribution. Every UI surface tags each
+    reason with its `source`/`modality` so this distinction stays visible."""
+    return {
+        "factor": factor,
+        "shap_contribution": round(min(max(severity, 0.05), 1.0), 4),
+        "direction": "increases_risk",
+        "source": "vitals",
+        "modality": modality,
+    }
+
+
 def explain_vitals(vitals: dict) -> list[dict]:
-    """Multimodal reasons from wearable biosensor data, matching the design
-    doc's example: heart-rate deviation, SpO2 drop, movement, temperature."""
+    """Multimodal reasons from wearable biosensor data: heart-rate deviation,
+    SpO2 drop, EDA/sEMG arousal, movement dynamics, and temperature.
+
+    These are auxiliary, rule-based reasons layered on top of the deep
+    model's EEG-only prediction — same role heart rate/SpO2 already played
+    before EDA/sEMG were added, not a new input the neural network itself
+    was trained on (no EEG+EDA+EMG-aligned dataset exists for that here)."""
     reasons = []
     hr = vitals.get("heart_rate")
     baseline_hr = vitals.get("baseline_heart_rate", 72)
     if hr is not None and baseline_hr:
         pct = (hr - baseline_hr) / baseline_hr * 100
         if pct >= 15:
-            reasons.append({
-                "factor": f"Increased heart rate (+{pct:.0f}% from baseline)",
-                "direction": "increases_risk", "source": "vitals",
-            })
+            reasons.append(_vitals_reason(f"Increased heart rate (+{pct:.0f}% from baseline)", pct / 50, "cardio"))
         elif pct <= -15:
-            reasons.append({
-                "factor": f"Decreased heart rate ({pct:.0f}% from baseline)",
-                "direction": "increases_risk", "source": "vitals",
-            })
+            reasons.append(_vitals_reason(f"Decreased heart rate ({pct:.0f}% from baseline)", abs(pct) / 50, "cardio"))
 
     spo2 = vitals.get("spo2")
     if spo2 is not None and spo2 < 95:
-        reasons.append({
-            "factor": f"Reduced oxygen saturation ({spo2:.0f}%)",
-            "direction": "increases_risk", "source": "vitals",
-        })
+        reasons.append(_vitals_reason(f"Reduced oxygen saturation ({spo2:.0f}%)", (95 - spo2) / 15, "cardio"))
+
+    eda = vitals.get("eda")
+    baseline_eda = vitals.get("baseline_eda", 4.0)
+    if eda is not None and baseline_eda:
+        pct = (eda - baseline_eda) / baseline_eda * 100
+        if pct >= 50:
+            reasons.append(_vitals_reason(
+                f"Elevated skin conductance / EDA (+{pct:.0f}% from baseline) — autonomic arousal", pct / 150, "eda",
+            ))
+
+    emg = vitals.get("emg")
+    if emg is not None and emg >= 0.5:
+        reasons.append(_vitals_reason(
+            f"Increased muscle activity (sEMG RMS {emg:.2f}) — possible tonic/clonic activation",
+            (emg - 0.5) / 0.5, "semg",
+        ))
 
     movement = vitals.get("movement_level")
     if movement is not None and movement >= 0.6:
-        reasons.append({
-            "factor": "Increased body movement detected",
-            "direction": "increases_risk", "source": "vitals",
-        })
+        reasons.append(_vitals_reason("Increased body movement detected", (movement - 0.6) / 0.4, "motion"))
+
+    jerk = vitals.get("jerk")
+    rotation_rate = vitals.get("rotation_rate")
+    jerk_severity = (jerk - 0.5) / 0.5 if jerk is not None else 0
+    rotation_severity = (rotation_rate - 100) / 400 if rotation_rate is not None else 0
+    if jerk_severity > 0 or rotation_severity > 0:
+        reasons.append(_vitals_reason(
+            "Abnormal movement dynamics (elevated jerk/rotation rate) — convulsive-pattern motion",
+            max(jerk_severity, rotation_severity), "motion",
+        ))
 
     temp = vitals.get("temperature")
     if temp is not None and (temp >= 38.0 or temp <= 35.5):
-        reasons.append({
-            "factor": f"Abnormal skin temperature ({temp:.1f}°C)",
-            "direction": "increases_risk", "source": "vitals",
-        })
+        reasons.append(_vitals_reason(f"Abnormal skin temperature ({temp:.1f}°C)", abs(temp - 36.8) / 3, "temperature"))
 
     return reasons

@@ -115,6 +115,8 @@ function PatientDetail({ patientId, onUnlink }) {
               <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
                 <span>HR: <b>{latest_vitals.heart_rate} bpm</b></span>
                 <span>SpO₂: <b>{latest_vitals.spo2}%</b></span>
+                <span>EDA: <b>{latest_vitals.eda} µS</b></span>
+                <span>sEMG: <b>{latest_vitals.emg}</b></span>
                 <span>Movement: <b>{Math.round(latest_vitals.movement_level * 100)}%</b></span>
                 <span>Temp: <b>{latest_vitals.temperature}°C</b></span>
               </div>

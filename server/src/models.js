@@ -15,6 +15,7 @@ const userSchema = new Schema({
   age: Number,
   medicalHistory: { type: String, default: "" },
   baselineHeartRate: { type: Number, default: 72 },
+  baselineEda: { type: Number, default: 4.0 }, // resting skin conductance, microsiemens
 
   // Caregiver/Clinician: patients they've linked to (by consent via patientCode)
   linkedPatients: [{ type: Schema.Types.ObjectId, ref: "User" }],
@@ -31,7 +32,15 @@ const sensorReadingSchema = new Schema({
   spo2: Number,
   movementLevel: Number,
   temperature: Number,
-  simulated: { type: Boolean, default: true },
+  eda: Number,          // electrodermal activity (skin conductance), microsiemens
+  emg: Number,          // surface EMG, normalized RMS muscle activation (0-1)
+  jerk: Number,         // IMU-derived rate of change of acceleration (0-1, normalized)
+  rotationRate: Number, // IMU gyroscope rotational velocity, deg/s
+  // Where the vitals+EEG for this reading came from — the EEG epoch itself is
+  // always drawn from the recorded dataset pool (no physical headset attached
+  // in this demo), but vitals may be simulated, typed in by hand, or read
+  // from a paired Bluetooth heart-rate device.
+  source: { type: String, enum: ["simulated", "manual", "device"], default: "simulated" },
 });
 
 // ---- Prediction Table ---------------------------------------------------------
@@ -43,7 +52,7 @@ const predictionSchema = new Schema({
   riskLevel: { type: String, enum: ["low", "moderate", "high"], required: true },
   predictionClass: { type: String, enum: ["inter_ictal", "pre_ictal", "ictal"], required: true },
   seizureWindow: String,
-  reasons: [{ factor: String, shap_contribution: Number, direction: String, source: String }],
+  reasons: [{ factor: String, shap_contribution: Number, direction: String, source: String, modality: String }],
   eegFeatures: Schema.Types.Mixed,
   // Filled in when a clinician reviews this prediction
   clinicianNote: String,

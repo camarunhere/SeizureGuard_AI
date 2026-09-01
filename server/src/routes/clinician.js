@@ -117,6 +117,10 @@ router.get("/patients/:patientId/report/:predictionId", clinicianOnly, loadLinke
     suggestions.push("Autonomic changes (heart rate) accompanied this reading — consider cardiac correlation review.");
   if (topReasons.some((r) => /oxygen/i.test(r.factor)))
     suggestions.push("Oxygen desaturation noted — monitor airway and consider supplemental oxygen per protocol.");
+  if (topReasons.some((r) => /skin conductance|EDA/i.test(r.factor)))
+    suggestions.push("Elevated electrodermal activity noted — autonomic arousal consistent with pre-ictal state; correlate with patient-reported prodrome.");
+  if (topReasons.some((r) => /muscle activity|sEMG/i.test(r.factor)))
+    suggestions.push("Increased sEMG activity noted — assess for tonic/clonic motor involvement.");
 
   res.json({
     patient_name: req.patient.fullName,

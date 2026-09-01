@@ -66,6 +66,15 @@ class PredictRequest(BaseModel):
     spo2: float = Field(98, ge=70, le=100)
     movement_level: float = Field(0.1, ge=0, le=1)
     temperature: float = Field(36.8, ge=34, le=42)
+    # Electrodermal activity (skin conductance, microsiemens) — autonomic
+    # nervous system arousal signal.
+    eda: float = Field(4.0, ge=0.5, le=25)
+    baseline_eda: float = Field(4.0, ge=0.5, le=25)
+    # Surface EMG, normalized RMS muscle activation (0 = fully relaxed).
+    emg: float = Field(0.15, ge=0, le=1)
+    # IMU-derived motion dynamics beyond raw movement intensity.
+    jerk: float = Field(0.1, ge=0, le=1)
+    rotation_rate: float = Field(20, ge=0, le=500)
 
 
 def _classify(probability: float) -> tuple[str, str, str | None]:
@@ -139,6 +148,12 @@ def simulate(bias_seizure: bool = False):
             "spo2": round(random.uniform(89, 95), 1),
             "movement_level": round(random.uniform(0.55, 0.95), 2),
             "temperature": round(random.uniform(37.3, 38.2), 1),
+            # Skin conductance response and muscle activation both spike
+            # sharply during convulsive activity; motion dynamics follow suit.
+            "eda": round(random.uniform(9.0, 22.0), 2),
+            "emg": round(random.uniform(0.55, 0.95), 2),
+            "jerk": round(random.uniform(0.5, 0.95), 2),
+            "rotation_rate": round(random.uniform(120, 400)),
         }
     else:
         vitals = {
@@ -146,6 +161,10 @@ def simulate(bias_seizure: bool = False):
             "spo2": round(random.uniform(96, 99.5), 1),
             "movement_level": round(random.uniform(0.02, 0.35), 2),
             "temperature": round(random.uniform(36.3, 37.1), 1),
+            "eda": round(random.uniform(1.5, 6.0), 2),
+            "emg": round(random.uniform(0.05, 0.25), 2),
+            "jerk": round(random.uniform(0.02, 0.2), 2),
+            "rotation_rate": round(random.uniform(2, 40)),
         }
 
     return {"eeg_signal": signal, "true_label_for_demo": true_seizure, **vitals}

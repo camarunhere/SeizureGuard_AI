@@ -1,7 +1,7 @@
 fastapi>=0.111
 uvicorn[standard]>=0.30
 torch>=2.2
-scikit-learn>=1.4
+scikit-learn==1.6.1
 pandas>=2.2
 numpy<2
 shap>=0.45

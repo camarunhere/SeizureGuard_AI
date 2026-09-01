@@ -92,6 +92,66 @@ const CLASS_LABELS = {
 };
 export function classLabel(c) { return CLASS_LABELS[c] || c; }
 
+// ---- Multimodal Risk Fingerprint --------------------------------------------
+// Groups a prediction's `reasons` by modality and shows relative contribution
+// as bars. EEG reasons carry a real SHAP value from the trained surrogate;
+// vitals reasons (EDA/sEMG/motion/cardio/temperature) carry a heuristic
+// severity score computed in src/explain.py — not a model-derived value.
+// Both are shown under the same `source`/`modality` tags so that distinction
+// stays visible rather than implying every bar is equally "AI-computed."
+const MODALITY_LABELS = {
+  eeg: "EEG", cardio: "Heart rate / SpO₂", eda: "EDA (skin conductance)",
+  semg: "sEMG (muscle activity)", motion: "Movement / IMU", temperature: "Temperature",
+};
+
+export function aggregateModalityContributions(reasons) {
+  const totals = {};
+  for (const r of reasons || []) {
+    const m = r.modality || r.source || "other";
+    totals[m] = (totals[m] || 0) + Math.abs(r.shap_contribution || 0);
+  }
+  const sum = Object.values(totals).reduce((a, b) => a + b, 0) || 1;
+  return Object.entries(totals)
+    .map(([modality, value]) => ({ modality, label: MODALITY_LABELS[modality] || modality, pct: (value / sum) * 100 }))
+    .sort((a, b) => b.pct - a.pct);
+}
+
+/** Top modalities by contribution, for "Primary contributors: X + Y" lines. */
+export function primaryContributors(reasons, topN = 2) {
+  return aggregateModalityContributions(reasons).slice(0, topN).map((r) => r.label);
+}
+
+export function RiskFingerprint({ reasons, riskProbability }) {
+  const rows = aggregateModalityContributions(reasons);
+  if (!rows.length) return <p className="text-sm text-slate-400">No contributing factors recorded.</p>;
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => (
+        <div key={row.modality}>
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="font-medium text-slate-700">{row.label}</span>
+            <span className="text-xs font-semibold text-slate-500">{row.pct.toFixed(0)}%</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div className="h-full rounded-full bg-blue-800" style={{ width: `${row.pct}%` }} />
+          </div>
+        </div>
+      ))}
+      {riskProbability != null && (
+        <div className="pt-3 mt-1 border-t border-slate-100">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="font-semibold text-slate-800">Overall risk</span>
+            <span className="text-xs font-bold text-slate-700">{(riskProbability * 100).toFixed(1)}%</span>
+          </div>
+          <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+            <div className="h-full rounded-full bg-red-600" style={{ width: `${Math.min(riskProbability * 100, 100)}%` }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Animated number that counts up to `value` on mount / when value changes. */
 function CountUp({ value, decimals = 0, duration = 700 }) {
   const [display, setDisplay] = useState(0);

@@ -1,6 +1,8 @@
-// Shared "run one monitoring tick" pipeline: pull a simulated EEG+vitals
-// reading, run the AI prediction, persist both, and raise an alert if the
-// risk is high enough — used by the Live Monitoring page's polling loop.
+// Shared "run one monitoring tick" pipeline: pull an EEG epoch (always drawn
+// from the recorded dataset pool — no physical headset attached in this demo),
+// pair it with vitals (simulated, typed in manually, or read from a paired
+// Bluetooth device), run the AI prediction, persist both, and raise an alert
+// if the risk is high enough — used by the Live Monitoring page.
 import { mlPredict, mlSimulate } from "./mlClient.js";
 import { Alert, Prediction, SensorReading, User } from "./models.js";
 
@@ -8,27 +10,54 @@ import { Alert, Prediction, SensorReading, User } from "./models.js";
 // but let the demo actually show a pre-ictal/ictal reading now and then.
 const SEIZURE_BIAS_PROBABILITY = 0.16;
 
-export async function runMonitoringTick(patient) {
-  const biasSeizure = Math.random() < SEIZURE_BIAS_PROBABILITY;
+// `opts.source`: "simulated" (default) | "manual" | "device"
+// `opts.vitals`: { heart_rate, spo2, movement_level, temperature, eda, emg,
+//   jerk, rotation_rate } — overrides the simulated vitals when the reading
+//   came from manual entry or a device. EDA/sEMG have no standard Bluetooth
+//   service (unlike heart rate), so they're always simulated or manual.
+// `opts.biasSeizure`: force which half of the epoch pool to draw from (used
+//   when the patient picks a sample EEG epoch type for manual/device entry).
+export async function runMonitoringTick(patient, opts = {}) {
+  const source = opts.source || "simulated";
+  const biasSeizure = opts.biasSeizure ?? (Math.random() < SEIZURE_BIAS_PROBABILITY);
   const sim = await mlSimulate(biasSeizure);
+  const vitals = opts.vitals || {
+    heart_rate: sim.heart_rate,
+    spo2: sim.spo2,
+    movement_level: sim.movement_level,
+    temperature: sim.temperature,
+    eda: sim.eda,
+    emg: sim.emg,
+    jerk: sim.jerk,
+    rotation_rate: sim.rotation_rate,
+  };
 
   const reading = await SensorReading.create({
     patient: patient._id,
     eegSignal: sim.eeg_signal,
-    heartRate: sim.heart_rate,
-    spo2: sim.spo2,
-    movementLevel: sim.movement_level,
-    temperature: sim.temperature,
-    simulated: true,
+    heartRate: vitals.heart_rate,
+    spo2: vitals.spo2,
+    movementLevel: vitals.movement_level,
+    temperature: vitals.temperature,
+    eda: vitals.eda,
+    emg: vitals.emg,
+    jerk: vitals.jerk,
+    rotationRate: vitals.rotation_rate,
+    source,
   });
 
   const result = await mlPredict({
     eeg_signal: sim.eeg_signal,
-    heart_rate: sim.heart_rate,
+    heart_rate: vitals.heart_rate,
     baseline_heart_rate: patient.baselineHeartRate || 72,
-    spo2: sim.spo2,
-    movement_level: sim.movement_level,
-    temperature: sim.temperature,
+    spo2: vitals.spo2,
+    movement_level: vitals.movement_level,
+    temperature: vitals.temperature,
+    eda: vitals.eda,
+    baseline_eda: patient.baselineEda || 4.0,
+    emg: vitals.emg,
+    jerk: vitals.jerk,
+    rotation_rate: vitals.rotation_rate,
   });
 
   const prediction = await Prediction.create({
@@ -85,5 +114,10 @@ export function readingPayload(r) {
     spo2: r.spo2,
     movement_level: r.movementLevel,
     temperature: r.temperature,
+    eda: r.eda,
+    emg: r.emg,
+    jerk: r.jerk,
+    rotation_rate: r.rotationRate,
+    source: r.source,
   };
 }

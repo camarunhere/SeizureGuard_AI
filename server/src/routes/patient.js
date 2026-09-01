@@ -1,10 +1,24 @@
 import { Router } from "express";
 import { requireRole } from "../auth.js";
+import { mlMetadata } from "../mlClient.js";
 import { Alert, Prediction, SeizureEvent, SensorReading, User, logActivity } from "../models.js";
 import { predictionPayload, readingPayload, runMonitoringTick } from "../services.js";
 
 const router = Router();
 const patientOnly = requireRole("patient");
+
+// ---- Model info (real training metadata — see models/metadata.json) ------------
+// Only the deployed deep model and its explainability surrogate have ever
+// actually been trained here; the Model Benchmark UI shows real numbers for
+// those two and leaves ablation variants blank rather than inventing them.
+
+router.get("/model-info", patientOnly, async (req, res) => {
+  try {
+    res.json(await mlMetadata());
+  } catch (err) {
+    res.status(502).json({ detail: `AI service unavailable: ${err.message}` });
+  }
+});
 
 // ---- Manage Profile ----------------------------------------------------------
 
@@ -17,15 +31,17 @@ router.get("/profile", patientOnly, (req, res) => {
     age: u.age ?? null,
     medical_history: u.medicalHistory || "",
     baseline_heart_rate: u.baselineHeartRate,
+    baseline_eda: u.baselineEda,
   });
 });
 
 router.put("/profile", patientOnly, async (req, res) => {
-  const { full_name, age, medical_history, baseline_heart_rate } = req.body || {};
+  const { full_name, age, medical_history, baseline_heart_rate, baseline_eda } = req.body || {};
   if (full_name != null) req.user.fullName = full_name;
   if (age != null) req.user.age = age;
   if (medical_history != null) req.user.medicalHistory = medical_history;
   if (baseline_heart_rate != null) req.user.baselineHeartRate = baseline_heart_rate;
+  if (baseline_eda != null) req.user.baselineEda = baseline_eda;
   await req.user.save();
   await logActivity(req.user, "update_profile");
   res.json({ message: "Profile updated." });
@@ -50,12 +66,51 @@ router.delete("/linked/:userId", patientOnly, async (req, res) => {
   res.json({ message: "Access revoked." });
 });
 
-// ---- Live Monitoring: one simulated EEG/vitals tick + AI prediction ------------
+// ---- Live Monitoring: manual entry or Bluetooth-device-assisted reading --------
+// The patient (or a paired heart-rate wearable) supplies vitals directly,
+// paired with a sample EEG epoch drawn from the recorded dataset pool (no
+// physical headset here).
 
-router.post("/live/tick", patientOnly, async (req, res) => {
+const VITALS_RANGE = {
+  heart_rate: [30, 220],
+  spo2: [70, 100],
+  movement_level: [0, 1],
+  temperature: [34, 42],
+  eda: [0.5, 25],
+  emg: [0, 1],
+  jerk: [0, 1],
+  rotation_rate: [0, 500],
+};
+
+function validateVitals(body) {
+  const vitals = {};
+  for (const [key, [min, max]] of Object.entries(VITALS_RANGE)) {
+    const v = Number(body[key]);
+    if (!Number.isFinite(v) || v < min || v > max) {
+      return { error: `${key.replace(/_/g, " ")} must be a number between ${min} and ${max}.` };
+    }
+    vitals[key] = v;
+  }
+  return { vitals };
+}
+
+router.post("/live/reading", patientOnly, async (req, res) => {
+  const { source, epoch_type } = req.body || {};
+  if (!["manual", "device"].includes(source))
+    return res.status(422).json({ detail: "source must be 'manual' or 'device'." });
+  if (!["normal", "seizure"].includes(epoch_type))
+    return res.status(422).json({ detail: "epoch_type must be 'normal' or 'seizure'." });
+
+  const { vitals, error } = validateVitals(req.body || {});
+  if (error) return res.status(422).json({ detail: error });
+
   try {
-    const { reading, prediction, alert } = await runMonitoringTick(req.user);
-    await logActivity(req.user, "live_tick", `risk=${prediction.riskLevel}`);
+    const { reading, prediction, alert } = await runMonitoringTick(req.user, {
+      source,
+      vitals,
+      biasSeizure: epoch_type === "seizure",
+    });
+    await logActivity(req.user, "live_reading", `source=${source} risk=${prediction.riskLevel}`);
     res.json({
       reading: readingPayload(reading),
       prediction: predictionPayload(prediction),
@@ -110,13 +165,20 @@ router.get("/predictions/:id", patientOnly, async (req, res) => {
 // ---- Emergency Alerts -----------------------------------------------------------
 
 router.get("/alerts", patientOnly, async (req, res) => {
-  const alerts = await Alert.find({ patient: req.user._id }).sort({ createdAt: -1 }).limit(50);
+  const alerts = await Alert.find({ patient: req.user._id }).sort({ createdAt: -1 }).limit(50)
+    .populate("prediction", "reasons predictionClass");
   res.json(alerts.map((a) => ({
     id: String(a._id),
     alert_type: a.alertType,
     risk_probability: a.riskProbability,
     acknowledged: a.acknowledged,
     created_at: a.createdAt.toISOString(),
+    prediction_class: a.prediction?.predictionClass || null,
+    reasons: a.prediction?.reasons || [],
+    // Real counts of who this alert is visible to (in-app), not a delivery
+    // guarantee — no push/email/SMS is actually sent by this system.
+    notified_caregivers: a.notifiedCaregivers.length,
+    notified_clinicians: a.notifiedClinicians.length,
   })));
 });
 
