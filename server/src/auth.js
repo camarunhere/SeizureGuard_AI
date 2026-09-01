@@ -11,15 +11,25 @@ export function createToken(user) {
 export async function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ detail: "Not authenticated" });
+  // A 401 here forces the frontend to clear the session and hard-reload the
+  // page (see api.js) — logged with the specific cause so an unexpected
+  // logout/reload is diagnosable from the server log instead of a guess.
+  if (!token) {
+    console.warn(`[auth] 401 on ${req.method} ${req.path} — no Authorization header`);
+    return res.status(401).json({ detail: "Not authenticated" });
+  }
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(payload.sub);
-    if (!user) return res.status(401).json({ detail: "User no longer exists" });
+    if (!user) {
+      console.warn(`[auth] 401 on ${req.method} ${req.path} — token valid but user ${payload.sub} no longer exists`);
+      return res.status(401).json({ detail: "User no longer exists" });
+    }
     if (user.isBlocked) return res.status(403).json({ detail: "Account is blocked" });
     req.user = user;
     next();
-  } catch {
+  } catch (err) {
+    console.warn(`[auth] 401 on ${req.method} ${req.path} — ${err.name}: ${err.message}`);
     return res.status(401).json({ detail: "Invalid or expired token" });
   }
 }
