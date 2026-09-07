@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { requireRole } from "../auth.js";
+import { checkinRiskFactors } from "../checkinRisk.js";
 import { mlMetadata } from "../mlClient.js";
-import { Alert, Prediction, SeizureEvent, SensorReading, User, logActivity } from "../models.js";
+import { Alert, DailyCheckin, Prediction, SeizureEvent, SensorReading, User, logActivity } from "../models.js";
 import { predictionPayload, readingPayload, runMonitoringTick } from "../services.js";
 
 const router = Router();
@@ -45,6 +46,129 @@ router.put("/profile", patientOnly, async (req, res) => {
   await req.user.save();
   await logActivity(req.user, "update_profile");
   res.json({ message: "Profile updated." });
+});
+
+// ---- Baseline patient information (collected once, editable later) -------------
+// Clinical record-keeping and context for clinicians — does not feed the
+// deep learning model (see src/ml_service.py, which only ever sees raw EEG).
+
+router.get("/baseline", patientOnly, (req, res) => {
+  const u = req.user;
+  res.json({
+    age: u.age ?? null,
+    sex: u.sex || "",
+    diagnosis_date: u.diagnosisDate ? u.diagnosisDate.toISOString().slice(0, 10) : "",
+    seizure_type: u.seizureType || "",
+    seizure_frequency: u.seizureFrequency || "",
+    last_seizure_date: u.lastSeizureDate ? u.lastSeizureDate.toISOString().slice(0, 10) : "",
+    has_aura: u.hasAura || "",
+    aura_symptoms: u.auraSymptoms || "",
+    medications: u.medications || "",
+    recent_medication_changes: u.recentMedicationChanges || "",
+    other_conditions: u.otherConditions || "",
+    known_triggers: u.knownTriggers || "",
+  });
+});
+
+router.put("/baseline", patientOnly, async (req, res) => {
+  const b = req.body || {};
+  const fields = {
+    age: "age", sex: "sex", seizure_type: "seizureType", seizure_frequency: "seizureFrequency",
+    has_aura: "hasAura", aura_symptoms: "auraSymptoms", medications: "medications",
+    recent_medication_changes: "recentMedicationChanges", other_conditions: "otherConditions",
+    known_triggers: "knownTriggers",
+  };
+  for (const [key, prop] of Object.entries(fields)) {
+    if (b[key] != null) req.user[prop] = b[key];
+  }
+  if (b.diagnosis_date != null) req.user.diagnosisDate = b.diagnosis_date ? new Date(b.diagnosis_date) : null;
+  if (b.last_seizure_date != null) req.user.lastSeizureDate = b.last_seizure_date ? new Date(b.last_seizure_date) : null;
+  await req.user.save();
+  await logActivity(req.user, "update_baseline");
+  res.json({ message: "Baseline information saved." });
+});
+
+// ---- Daily check-in --------------------------------------------------------------
+// One document per calendar day (upserted). Risk factors derived from it are
+// rule-based (checkinRisk.js), not machine-learned — shown as a separate
+// "self-reported risk factors" panel, never merged into the AI's own
+// SHAP-based reasons from a Live Monitoring reading.
+
+function startOfDay(d) {
+  const day = new Date(d);
+  day.setHours(0, 0, 0, 0);
+  return day;
+}
+
+function checkinPayload(c) {
+  if (!c) return null;
+  return {
+    id: String(c._id),
+    date: c.date.toISOString().slice(0, 10),
+    sleep_hours: c.sleepHours ?? null,
+    sleep_quality: c.sleepQuality || null,
+    woke_frequently: c.wokeFrequently ?? null,
+    medication_taken: c.medicationTaken || null,
+    medication_late: c.medicationLate ?? null,
+    stress_level: c.stressLevel ?? null,
+    anxiety_level: c.anxietyLevel ?? null,
+    fatigue_level: c.fatigueLevel ?? null,
+    illness: c.illness || "none",
+    ate_normally: c.ateNormally ?? null,
+    hydrated: c.hydrated ?? null,
+    strenuous_exercise: c.strenuousExercise ?? null,
+    alcohol: c.alcohol ?? null,
+    caffeine_more_than_usual: c.caffeineMoreThanUsual ?? null,
+    recreational_drugs: c.recreationalDrugs ?? null,
+    known_trigger_experienced: c.knownTriggerExperienced ?? null,
+    trigger_note: c.triggerNote || "",
+    risk_factors: checkinRiskFactors({
+      sleepHours: c.sleepHours, sleepQuality: c.sleepQuality, wokeFrequently: c.wokeFrequently,
+      medicationTaken: c.medicationTaken, medicationLate: c.medicationLate,
+      stressLevel: c.stressLevel, anxietyLevel: c.anxietyLevel, fatigueLevel: c.fatigueLevel,
+      illness: c.illness, ateNormally: c.ateNormally, hydrated: c.hydrated, strenuousExercise: c.strenuousExercise,
+      alcohol: c.alcohol, caffeineMoreThanUsual: c.caffeineMoreThanUsual, recreationalDrugs: c.recreationalDrugs,
+      knownTriggerExperienced: c.knownTriggerExperienced, triggerNote: c.triggerNote,
+    }),
+  };
+}
+
+router.get("/checkin/today", patientOnly, async (req, res) => {
+  const today = startOfDay(new Date());
+  const checkin = await DailyCheckin.findOne({ patient: req.user._id, date: today });
+  res.json(checkinPayload(checkin));
+});
+
+router.post("/checkin", patientOnly, async (req, res) => {
+  const b = req.body || {};
+  const today = startOfDay(new Date());
+  const update = {
+    sleepHours: b.sleep_hours != null ? Number(b.sleep_hours) : undefined,
+    sleepQuality: b.sleep_quality, wokeFrequently: b.woke_frequently,
+    medicationTaken: b.medication_taken, medicationLate: b.medication_late,
+    stressLevel: b.stress_level != null ? Number(b.stress_level) : undefined,
+    anxietyLevel: b.anxiety_level != null ? Number(b.anxiety_level) : undefined,
+    fatigueLevel: b.fatigue_level != null ? Number(b.fatigue_level) : undefined,
+    illness: b.illness, ateNormally: b.ate_normally, hydrated: b.hydrated,
+    strenuousExercise: b.strenuous_exercise, alcohol: b.alcohol,
+    caffeineMoreThanUsual: b.caffeine_more_than_usual, recreationalDrugs: b.recreational_drugs,
+    knownTriggerExperienced: b.known_trigger_experienced, triggerNote: b.trigger_note,
+  };
+  Object.keys(update).forEach((k) => update[k] === undefined && delete update[k]);
+
+  const checkin = await DailyCheckin.findOneAndUpdate(
+    { patient: req.user._id, date: today },
+    { $set: update, $setOnInsert: { patient: req.user._id, date: today } },
+    { upsert: true, new: true }
+  );
+  await logActivity(req.user, "daily_checkin");
+  res.json(checkinPayload(checkin));
+});
+
+router.get("/checkin/history", patientOnly, async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 30, 90);
+  const checkins = await DailyCheckin.find({ patient: req.user._id }).sort({ date: -1 }).limit(limit);
+  res.json(checkins.map(checkinPayload));
 });
 
 // ---- Who's monitoring me (caregivers/clinicians linked via my patient code) ----

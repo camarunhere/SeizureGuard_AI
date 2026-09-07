@@ -21,6 +21,23 @@ const userSchema = new Schema({
   baselineHeartRate: { type: Number, default: 72 },
   baselineEda: { type: Number, default: 4.0 }, // resting skin conductance, microsiemens
 
+  // Baseline patient information — collected once, editable later. Purely
+  // clinical record-keeping and context for clinicians; none of this feeds
+  // the deep learning model (which only ever sees the raw EEG signal — see
+  // src/ml_service.py). It also seeds the rule-based daily check-in risk
+  // factors (see checkinRisk.js) where relevant (e.g. known triggers).
+  sex: { type: String, enum: ["", "male", "female", "other", "prefer_not_to_say"], default: "" },
+  diagnosisDate: Date,
+  seizureType: { type: String, default: "" }, // e.g. focal, generalized, absence, tonic-clonic, unknown
+  seizureFrequency: { type: String, default: "" }, // free text, e.g. "2-3 times/month"
+  lastSeizureDate: Date,
+  hasAura: { type: String, enum: ["", "yes", "no", "sometimes"], default: "" },
+  auraSymptoms: { type: String, default: "" },
+  medications: { type: String, default: "" },
+  recentMedicationChanges: { type: String, default: "" },
+  otherConditions: { type: String, default: "" },
+  knownTriggers: { type: String, default: "" },
+
   // Caregiver/Clinician: patients they've linked to (by consent via patientCode)
   linkedPatients: [{ type: Schema.Types.ObjectId, ref: "User" }],
 
@@ -88,6 +105,47 @@ const alertSchema = new Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+// ---- Daily Check-in Table -------------------------------------------------------
+// One document per patient per calendar day (upserted, see routes/patient.js).
+// Feeds the rule-based, clinically-informed risk-factor heuristics in
+// checkinRisk.js — NOT the deep learning model, which only ever sees the raw
+// EEG signal. Shown as a separate "self-reported risk factors" panel, never
+// merged into the AI's own SHAP-based reasons.
+const dailyCheckinSchema = new Schema({
+  patient: { type: Schema.Types.ObjectId, ref: "User", index: true, required: true },
+  date: { type: Date, required: true, index: true }, // truncated to the calendar day
+
+  // Sleep
+  sleepHours: Number,
+  sleepQuality: { type: String, enum: ["very_good", "good", "average", "poor", "very_poor"] },
+  wokeFrequently: Boolean,
+
+  // Medication
+  medicationTaken: { type: String, enum: ["yes", "no", "partially"] },
+  medicationLate: Boolean,
+
+  // Stress & wellbeing (0-10 scales)
+  stressLevel: { type: Number, min: 0, max: 10 },
+  anxietyLevel: { type: Number, min: 0, max: 10 },
+  fatigueLevel: { type: Number, min: 0, max: 10 },
+
+  // Physical factors
+  illness: { type: String, enum: ["none", "fever", "infection", "other"], default: "none" },
+  ateNormally: Boolean,
+  hydrated: Boolean,
+  strenuousExercise: Boolean,
+
+  // Potential triggers
+  alcohol: Boolean,
+  caffeineMoreThanUsual: Boolean,
+  recreationalDrugs: Boolean,
+  knownTriggerExperienced: Boolean,
+  triggerNote: { type: String, default: "" },
+
+  createdAt: { type: Date, default: Date.now },
+});
+dailyCheckinSchema.index({ patient: 1, date: 1 }, { unique: true });
+
 const activityLogSchema = new Schema({
   user: { type: Schema.Types.ObjectId, ref: "User" },
   userEmail: String,
@@ -101,6 +159,7 @@ export const SensorReading = mongoose.model("SensorReading", sensorReadingSchema
 export const Prediction = mongoose.model("Prediction", predictionSchema);
 export const SeizureEvent = mongoose.model("SeizureEvent", seizureEventSchema);
 export const Alert = mongoose.model("Alert", alertSchema);
+export const DailyCheckin = mongoose.model("DailyCheckin", dailyCheckinSchema);
 export const ActivityLog = mongoose.model("ActivityLog", activityLogSchema);
 
 export async function logActivity(user, action, detail = "") {

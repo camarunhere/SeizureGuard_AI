@@ -14,6 +14,8 @@ export default function PatientPortal({ tab }) {
     case "benchmark": return <ModelBenchmark />;
     case "alerts": return <Alerts />;
     case "history": return <History />;
+    case "checkin": return <DailyCheckin />;
+    case "baseline": return <BaselineInfo />;
     case "profile": return <Profile />;
     default: return null;
   }
@@ -23,6 +25,7 @@ export default function PatientPortal({ tab }) {
 
 function Dashboard() {
   const { data, loading, error, reload } = useApi("/api/patient/dashboard");
+  const checkin = useApi("/api/patient/checkin/today");
 
   if (loading) return <Card><Skeleton lines={4} /></Card>;
   if (error) return <Alert>{error}</Alert>;
@@ -80,6 +83,42 @@ function Dashboard() {
           <p className="text-sm text-slate-400">No seizure events logged yet.</p>
         )}
       </Card>
+
+      <Card title="Today's self-reported risk factors" className="sm:col-span-2">
+        {checkin.loading ? <Skeleton lines={2} /> : !checkin.data ? (
+          <p className="text-sm text-slate-400">No check-in yet today — visit Daily Check-in to log sleep, medication, and stress.</p>
+        ) : (
+          <CheckinRiskFactors checkin={checkin.data} />
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/** Rule-based (not AI) risk factors from the daily check-in — see
+ * server/src/checkinRisk.js. Always rendered separately from AI/SHAP
+ * reasons so the two kinds of "why" (model-derived vs. self-reported
+ * heuristic) never look like the same thing. */
+function CheckinRiskFactors({ checkin }) {
+  const factors = checkin.risk_factors || [];
+  return (
+    <div>
+      <p className="text-xs text-slate-400 mb-3">
+        Clinically-informed heuristic flags from today's check-in (sleep, medication, stress, triggers) — not a machine
+        prediction, shown separately from the AI's EEG-based risk score.
+      </p>
+      {factors.length === 0 ? (
+        <p className="text-sm text-emerald-700 font-medium">No elevated self-reported risk factors today.</p>
+      ) : (
+        <div className="space-y-2">
+          {factors.map((f, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm">
+              <span className="text-xs font-mono text-slate-400 w-5 shrink-0 mt-0.5">{String(i + 1).padStart(2, "0")}</span>
+              <span className="text-slate-700">{f.factor}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -748,6 +787,311 @@ function History() {
         )}
       </Card>
     </div>
+  );
+}
+
+// ---- Daily Check-in ---------------------------------------------------------------
+// Submits once per calendar day (upserted server-side — resubmitting the
+// same day overwrites, not duplicates). Risk factors are rule-based, not
+// AI-generated — see server/src/checkinRisk.js and the note on the card.
+
+const EMPTY_CHECKIN = {
+  sleep_hours: "", sleep_quality: "", woke_frequently: "",
+  medication_taken: "", medication_late: "",
+  stress_level: "", anxiety_level: "", fatigue_level: "",
+  illness: "none", ate_normally: "", hydrated: "", strenuous_exercise: "",
+  alcohol: "", caffeine_more_than_usual: "", recreational_drugs: "",
+  known_trigger_experienced: "", trigger_note: "",
+};
+
+function boolToStr(v) { return v === true ? "yes" : v === false ? "no" : ""; }
+function strToBool(v) { return v === "yes" ? true : v === "no" ? false : undefined; }
+
+function YesNoField({ label, value, onChange }) {
+  return (
+    <Field label={label}>
+      <select className={inputCls} value={value} onChange={onChange}>
+        <option value="">—</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </Field>
+  );
+}
+
+function ScaleField({ label, value, onChange }) {
+  return (
+    <Field label={`${label}${value !== "" ? ` (${value}/10)` : ""}`}>
+      <input type="range" min={0} max={10} className="w-full" value={value === "" ? 0 : value} onChange={onChange} />
+    </Field>
+  );
+}
+
+function DailyCheckin() {
+  const { data, loading, error: loadError, reload } = useApi("/api/patient/checkin/today");
+  const [form, setForm] = useState(null);
+  const [saveError, setSaveError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!loading && !form) {
+      setForm(data ? {
+        sleep_hours: data.sleep_hours ?? "", sleep_quality: data.sleep_quality || "", woke_frequently: boolToStr(data.woke_frequently),
+        medication_taken: data.medication_taken || "", medication_late: boolToStr(data.medication_late),
+        stress_level: data.stress_level ?? "", anxiety_level: data.anxiety_level ?? "", fatigue_level: data.fatigue_level ?? "",
+        illness: data.illness || "none", ate_normally: boolToStr(data.ate_normally), hydrated: boolToStr(data.hydrated),
+        strenuous_exercise: boolToStr(data.strenuous_exercise), alcohol: boolToStr(data.alcohol),
+        caffeine_more_than_usual: boolToStr(data.caffeine_more_than_usual), recreational_drugs: boolToStr(data.recreational_drugs),
+        known_trigger_experienced: boolToStr(data.known_trigger_experienced), trigger_note: data.trigger_note || "",
+      } : EMPTY_CHECKIN);
+    }
+  }, [data, loading, form]);
+
+  if (loading || !form) return <Card><Skeleton lines={6} /></Card>;
+  if (loadError) return <Alert>{loadError}</Alert>;
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaveError("");
+    setSaved(false);
+    setBusy(true);
+    try {
+      await api("/api/patient/checkin", {
+        method: "POST",
+        body: {
+          sleep_hours: form.sleep_hours === "" ? undefined : Number(form.sleep_hours),
+          sleep_quality: form.sleep_quality || undefined,
+          woke_frequently: strToBool(form.woke_frequently),
+          medication_taken: form.medication_taken || undefined,
+          medication_late: strToBool(form.medication_late),
+          stress_level: form.stress_level === "" ? undefined : Number(form.stress_level),
+          anxiety_level: form.anxiety_level === "" ? undefined : Number(form.anxiety_level),
+          fatigue_level: form.fatigue_level === "" ? undefined : Number(form.fatigue_level),
+          illness: form.illness,
+          ate_normally: strToBool(form.ate_normally),
+          hydrated: strToBool(form.hydrated),
+          strenuous_exercise: strToBool(form.strenuous_exercise),
+          alcohol: strToBool(form.alcohol),
+          caffeine_more_than_usual: strToBool(form.caffeine_more_than_usual),
+          recreational_drugs: strToBool(form.recreational_drugs),
+          known_trigger_experienced: strToBool(form.known_trigger_experienced),
+          trigger_note: form.trigger_note || undefined,
+        },
+      });
+      setSaved(true);
+      reload();
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card title={`Today's check-in${data ? " (already submitted — editing will update it)" : ""}`}>
+        <Alert>{saveError}</Alert>
+        <Alert kind="success">{saved ? "Check-in saved." : ""}</Alert>
+        <form onSubmit={submit} className="space-y-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Sleep</p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <Field label="Hours of sleep last night">
+                <input type="number" min={0} max={24} step={0.5} placeholder="e.g. 7" className={inputCls} value={form.sleep_hours} onChange={set("sleep_hours")} />
+              </Field>
+              <Field label="Sleep quality">
+                <select className={inputCls} value={form.sleep_quality} onChange={set("sleep_quality")}>
+                  <option value="">—</option>
+                  <option value="very_good">Very good</option>
+                  <option value="good">Good</option>
+                  <option value="average">Average</option>
+                  <option value="poor">Poor</option>
+                  <option value="very_poor">Very poor</option>
+                </select>
+              </Field>
+              <YesNoField label="Woke up frequently during the night?" value={form.woke_frequently} onChange={set("woke_frequently")} />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Medication</p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <Field label="Took all seizure medication as prescribed?">
+                <select className={inputCls} value={form.medication_taken} onChange={set("medication_taken")}>
+                  <option value="">—</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                  <option value="partially">Partially</option>
+                </select>
+              </Field>
+              <YesNoField label="Any dose later than usual?" value={form.medication_late} onChange={set("medication_late")} />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Stress & wellbeing</p>
+            <div className="grid sm:grid-cols-3 gap-4">
+              <ScaleField label="Stress today" value={form.stress_level} onChange={set("stress_level")} />
+              <ScaleField label="Anxiety today" value={form.anxiety_level} onChange={set("anxiety_level")} />
+              <ScaleField label="Unusually tired today" value={form.fatigue_level} onChange={set("fatigue_level")} />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Physical factors</p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <Field label="Been unwell recently?">
+                <select className={inputCls} value={form.illness} onChange={set("illness")}>
+                  <option value="none">No</option>
+                  <option value="fever">Fever</option>
+                  <option value="infection">Infection</option>
+                  <option value="other">Other</option>
+                </select>
+              </Field>
+              <YesNoField label="Eaten normally today?" value={form.ate_normally} onChange={set("ate_normally")} />
+              <YesNoField label="Enough fluids today?" value={form.hydrated} onChange={set("hydrated")} />
+              <YesNoField label="Unusually strenuous exercise today?" value={form.strenuous_exercise} onChange={set("strenuous_exercise")} />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Potential triggers</p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <YesNoField label="Alcohol since your last check-in?" value={form.alcohol} onChange={set("alcohol")} />
+              <YesNoField label="More caffeine than usual?" value={form.caffeine_more_than_usual} onChange={set("caffeine_more_than_usual")} />
+              <YesNoField label="Any recreational drug use?" value={form.recreational_drugs} onChange={set("recreational_drugs")} />
+              <YesNoField label="Experienced a known personal trigger?" value={form.known_trigger_experienced} onChange={set("known_trigger_experienced")} />
+            </div>
+            {form.known_trigger_experienced === "yes" && (
+              <div className="mt-4">
+                <Field label="What was the trigger? (optional)">
+                  <input className={inputCls} value={form.trigger_note} onChange={set("trigger_note")} placeholder="e.g. flashing lights, missed meal" />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <Button type="submit" disabled={busy}>{busy && <Spinner />}Save check-in</Button>
+        </form>
+      </Card>
+
+      {data && (
+        <Card title="Self-reported risk factors from this check-in">
+          <CheckinRiskFactors checkin={data} />
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---- Baseline Info -----------------------------------------------------------------
+// Collected once, editable anytime. Clinical context for clinicians — does
+// not feed the deep learning model (see src/ml_service.py).
+
+function BaselineInfo() {
+  const { data, loading, error, reload } = useApi("/api/patient/baseline");
+  const [form, setForm] = useState(null);
+  const [saveError, setSaveError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (data && !form) setForm({ ...data });
+  }, [data, form]);
+
+  if (loading || !form) return <Card><Skeleton lines={6} /></Card>;
+  if (error) return <Alert>{error}</Alert>;
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaveError("");
+    setSaved(false);
+    setBusy(true);
+    try {
+      await api("/api/patient/baseline", { method: "PUT", body: form });
+      setSaved(true);
+      reload();
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Baseline patient information">
+      <p className="text-xs text-slate-400 -mt-2 mb-4">
+        Collected once and editable anytime — gives clinicians clinical context. This doesn't feed the AI prediction, which
+        works from the raw EEG signal only.
+      </p>
+      <Alert>{saveError}</Alert>
+      <Alert kind="success">{saved ? "Baseline information saved." : ""}</Alert>
+      <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
+        <Field label="Age">
+          <input type="number" min={0} max={120} className={inputCls} value={form.age ?? ""} onChange={(e) => setForm({ ...form, age: e.target.value })} />
+        </Field>
+        <Field label="Sex">
+          <select className={inputCls} value={form.sex} onChange={set("sex")}>
+            <option value="">—</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="other">Other</option>
+            <option value="prefer_not_to_say">Prefer not to say</option>
+          </select>
+        </Field>
+        <Field label="When were you first diagnosed?">
+          <input type="date" className={inputCls} value={form.diagnosis_date} onChange={set("diagnosis_date")} />
+        </Field>
+        <Field label="Most recent seizure">
+          <input type="date" className={inputCls} value={form.last_seizure_date} onChange={set("last_seizure_date")} />
+        </Field>
+        <Field label="Seizure type, if known">
+          <input className={inputCls} value={form.seizure_type} onChange={set("seizure_type")} placeholder="e.g. focal, generalized, tonic-clonic" />
+        </Field>
+        <Field label="Usual seizure frequency">
+          <input className={inputCls} value={form.seizure_frequency} onChange={set("seizure_frequency")} placeholder="e.g. 2-3 times per month" />
+        </Field>
+        <Field label="Do you usually get an aura/warning?">
+          <select className={inputCls} value={form.has_aura} onChange={set("has_aura")}>
+            <option value="">—</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+            <option value="sometimes">Sometimes</option>
+          </select>
+        </Field>
+        <Field label="Typical aura/pre-seizure symptoms">
+          <input className={inputCls} value={form.aura_symptoms} onChange={set("aura_symptoms")} placeholder="e.g. tingling, déjà vu, dizziness" />
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Current seizure medications">
+            <textarea rows={2} className={inputCls} value={form.medications} onChange={set("medications")} placeholder="e.g. Levetiracetam 500mg twice daily" />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Recent medication changes (optional)">
+            <textarea rows={2} className={inputCls} value={form.recent_medication_changes} onChange={set("recent_medication_changes")} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Other medical conditions (optional)">
+            <textarea rows={2} className={inputCls} value={form.other_conditions} onChange={set("other_conditions")} />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Known seizure triggers (optional)">
+            <textarea rows={2} className={inputCls} value={form.known_triggers} onChange={set("known_triggers")} placeholder="e.g. flashing lights, sleep deprivation, missed meals" />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Button type="submit" disabled={busy}>{busy && <Spinner />}Save baseline information</Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 

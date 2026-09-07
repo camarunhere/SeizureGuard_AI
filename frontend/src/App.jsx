@@ -11,12 +11,14 @@ import Background, { BG_TINTS } from "./Background";
 const NAV = {
   patient: [
     ["dashboard", "Dashboard"],
+    ["checkin", "Daily Check-in"],
     ["live", "Live Monitoring"],
     ["predictions", "AI Prediction"],
     ["xai", "Explainable AI"],
     ["benchmark", "Model Benchmark"],
     ["alerts", "Emergency Alerts"],
     ["history", "History & Analytics"],
+    ["baseline", "Baseline Info"],
     ["profile", "Profile"],
   ],
   caregiver: [
@@ -34,12 +36,14 @@ const NAV = {
 const PAGE_HERO = {
   patient: {
     dashboard: ["🧠", "Patient Dashboard", "Your current seizure risk status, vitals, and last seizure info at a glance.", "from-blue-900 via-blue-800 to-indigo-700"],
+    checkin: ["📝", "Daily Check-in", "Sleep, medication, stress, and potential triggers — self-reported risk factors for today.", "from-emerald-700 via-teal-700 to-cyan-800"],
     live: ["📡", "Live Monitoring", "Continuous EEG and wearable biosensor stream.", "from-indigo-800 via-blue-800 to-teal-700"],
     predictions: ["🤖", "AI Prediction Dashboard", "Seizure risk prediction from the deep learning model.", "from-blue-900 via-indigo-800 to-violet-700"],
     xai: ["💡", "Explainable AI", "Understand exactly why the AI made this prediction.", "from-amber-600 via-orange-600 to-red-600"],
     benchmark: ["📈", "Model Benchmark", "Real training results for the deployed model — no invented numbers.", "from-slate-800 via-blue-900 to-indigo-900"],
     alerts: ["🚨", "Emergency Alerts", "Immediate response when high seizure risk is detected.", "from-red-700 via-rose-700 to-red-800"],
     history: ["📊", "History & Analytics", "Long-term seizure history and health trends.", "from-teal-700 via-emerald-700 to-cyan-700"],
+    baseline: ["🩹", "Baseline Info", "Your diagnosis, medications, and known triggers — collected once, editable anytime.", "from-indigo-900 via-blue-900 to-slate-800"],
     profile: ["👤", "Profile", "Your details and shareable patient code.", "from-slate-700 via-blue-900 to-slate-800"],
   },
   caregiver: {
@@ -55,7 +59,7 @@ const PAGE_HERO = {
 };
 
 const PAGE_BG = {
-  patient: { dashboard: "brain", live: "livewave", predictions: "network", xai: "insight", benchmark: "network", alerts: "alert", history: "timeline", profile: "profile" },
+  patient: { dashboard: "brain", checkin: "profile", live: "livewave", predictions: "network", xai: "insight", benchmark: "network", alerts: "alert", history: "timeline", baseline: "profile", profile: "profile" },
   caregiver: { patients: "link", alerts: "alert" },
   clinician: { patients: "clinical" },
   admin: { clinicians: "clinical" },
