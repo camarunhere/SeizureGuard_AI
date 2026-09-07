@@ -83,6 +83,12 @@ const predictionSchema = new Schema({
 });
 
 // ---- Seizure History (logged actual events, per the History & Analytics page) --
+// The detailed fields below (activity before, aura, symptoms, consciousness,
+// falls, movement, tongue biting, incontinence, witness, EMS) are a
+// structured post-seizure report — real clinical documentation value for
+// the patient's own record and for clinicians reviewing the case, filled in
+// after the fact by the patient/caregiver. None of it is required; a
+// seizure can still be logged with just a date and duration as before.
 const seizureEventSchema = new Schema({
   patient: { type: Schema.Types.ObjectId, ref: "User", index: true, required: true },
   date: { type: Date, default: Date.now },
@@ -91,6 +97,18 @@ const seizureEventSchema = new Schema({
   recoveryTimeMinutes: Number,
   predictionAccuracy: Number, // % — was this event correctly flagged in advance
   triggeredByPredictionId: { type: Schema.Types.ObjectId, ref: "Prediction" },
+
+  activityBefore: { type: String, default: "" }, // "What were you doing immediately before it?"
+  hadWarningAura: { type: String, enum: ["", "yes", "no", "unsure"], default: "" },
+  symptomsOccurred: { type: String, default: "" },
+  lostConsciousness: { type: String, enum: ["", "yes", "no", "unsure"], default: "" },
+  fell: { type: String, enum: ["", "yes", "no"], default: "" },
+  unusualMovement: { type: String, enum: ["", "yes", "no"], default: "" },
+  tongueBiting: { type: String, enum: ["", "yes", "no"], default: "" },
+  incontinence: { type: String, enum: ["", "yes", "no"], default: "" },
+  witnessPresent: { type: String, enum: ["", "yes", "no"], default: "" },
+  witnessNote: { type: String, default: "" },
+  emsRequired: { type: String, enum: ["", "yes", "no"], default: "" },
 });
 
 // ---- Alert Table ----------------------------------------------------------------
@@ -114,6 +132,16 @@ const alertSchema = new Schema({
 const dailyCheckinSchema = new Schema({
   patient: { type: Schema.Types.ObjectId, ref: "User", index: true, required: true },
   date: { type: Date, required: true, index: true }, // truncated to the calendar day
+
+  // Possible warning symptoms right now (aura/prodrome-type signs) — the
+  // most clinically direct of all the check-in signals, since these can
+  // directly precede a seizure rather than just elevate general risk.
+  warningSymptoms: [{
+    type: String,
+    enum: ["unusual_smell_taste", "deja_vu", "dizziness", "visual_changes", "tingling_numbness",
+      "confusion", "sudden_fear_anxiety", "unusual_sounds", "headache", "other"],
+  }],
+  warningSymptomsOther: { type: String, default: "" },
 
   // Sleep
   sleepHours: Number,
@@ -141,6 +169,14 @@ const dailyCheckinSchema = new Schema({
   recreationalDrugs: Boolean,
   knownTriggerExperienced: Boolean,
   triggerNote: { type: String, default: "" },
+
+  // "Compared with your usual day, does today feel different?" — a single
+  // holistic self-assessment that often catches what the itemized questions
+  // above miss.
+  comparedToUsual: {
+    type: String,
+    enum: ["much_better", "slightly_better", "normal", "slightly_worse", "much_worse"],
+  },
 
   createdAt: { type: Date, default: Date.now },
 });

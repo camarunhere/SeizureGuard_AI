@@ -23,9 +23,36 @@ function factor(text, severity, modality = "checkin") {
   };
 }
 
+export const WARNING_SYMPTOM_LABELS = {
+  unusual_smell_taste: "Unusual smell/taste",
+  deja_vu: "Déjà vu",
+  dizziness: "Dizziness",
+  visual_changes: "Visual changes",
+  tingling_numbness: "Tingling/numbness",
+  confusion: "Confusion",
+  sudden_fear_anxiety: "Sudden fear/anxiety",
+  unusual_sounds: "Unusual sounds",
+  headache: "Headache",
+  other: "Other",
+};
+
 export function checkinRiskFactors(checkin) {
   if (!checkin) return [];
   const reasons = [];
+
+  // Warning symptoms right now (aura/prodrome-type signs) are the most
+  // clinically direct signal here — these can immediately precede a
+  // seizure, unlike the other, more general lifestyle risk factors below —
+  // so this is checked first and carries the highest heuristic severity.
+  if (checkin.warningSymptoms && checkin.warningSymptoms.length > 0) {
+    const labels = checkin.warningSymptoms.map((s) =>
+      s === "other" && checkin.warningSymptomsOther ? checkin.warningSymptomsOther : (WARNING_SYMPTOM_LABELS[s] || s)
+    );
+    reasons.push(factor(
+      `Possible seizure warning symptoms reported right now: ${labels.join(", ")} — these can directly precede a seizure`,
+      0.9, "warning_symptoms",
+    ));
+  }
 
   if (checkin.sleepHours != null && checkin.sleepHours < 6) {
     reasons.push(factor(`Short sleep last night (${checkin.sleepHours}h) — sleep deprivation is a well-documented seizure trigger`, (6 - checkin.sleepHours) / 4));
@@ -85,5 +112,58 @@ export function checkinRiskFactors(checkin) {
     ));
   }
 
+  if (checkin.comparedToUsual === "much_worse") {
+    reasons.push(factor("Self-rated today as feeling much worse than usual overall", 0.6));
+  } else if (checkin.comparedToUsual === "slightly_worse") {
+    reasons.push(factor("Self-rated today as feeling slightly worse than usual overall", 0.3));
+  }
+
   return reasons;
+}
+
+// Buckets the heuristic severities into a single Low/Moderate/Elevated badge
+// — a simple, transparent aggregation (highest severity present, with a
+// floor bump when several moderate factors co-occur), not a learned score.
+export function checkinRiskLevel(reasons) {
+  if (!reasons.length) return { level: "low", label: "Low" };
+  const maxSeverity = Math.max(...reasons.map((r) => r.shap_contribution));
+  const count = reasons.length;
+  if (maxSeverity >= 0.75 || (maxSeverity >= 0.5 && count >= 3)) return { level: "elevated", label: "Elevated" };
+  if (maxSeverity >= 0.4 || count >= 2) return { level: "moderate", label: "Moderate" };
+  return { level: "low", label: "Low" };
+}
+
+// Real statistical comparison against the patient's OWN recent history
+// (simple rolling average over past check-ins) — genuinely "personalised"
+// in the sense of being specific to this patient's own baseline, but this
+// is descriptive statistics, not a trained/learned model. A true
+// personalised ML model would need real longitudinal data linking these
+// answers to actual seizure outcomes, which doesn't exist yet — see the
+// dissertation note in routes/patient.js.
+const BASELINE_FIELDS = {
+  sleepHours: "Sleep (hours)",
+  stressLevel: "Stress",
+  anxietyLevel: "Anxiety",
+  fatigueLevel: "Fatigue",
+};
+
+export function compareToBaseline(today, history) {
+  const past = history.filter((h) => String(h._id) !== String(today?._id));
+  if (past.length < 3) return null; // not enough history for a meaningful average yet
+
+  const comparisons = [];
+  for (const [field, label] of Object.entries(BASELINE_FIELDS)) {
+    const values = past.map((h) => h[field]).filter((v) => v != null);
+    const todayValue = today?.[field];
+    if (values.length < 3 || todayValue == null) continue;
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    const delta = todayValue - avg;
+    const threshold = field === "sleepHours" ? 1 : 2; // meaningful-difference thresholds per scale
+    if (Math.abs(delta) < threshold) continue;
+    comparisons.push({
+      field, label, today: todayValue, average: Math.round(avg * 10) / 10,
+      direction: delta > 0 ? "higher" : "lower",
+    });
+  }
+  return comparisons;
 }

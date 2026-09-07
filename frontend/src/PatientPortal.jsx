@@ -101,16 +101,25 @@ function Dashboard() {
  * heuristic) never look like the same thing. */
 function CheckinRiskFactors({ checkin }) {
   const factors = checkin.risk_factors || [];
+  const level = checkin.risk_level || { level: "low", label: "Low" };
+  const style = RISK_LEVEL_STYLES[level.level] || RISK_LEVEL_STYLES.low;
+  const comparisons = checkin.baseline_comparison || [];
+
   return (
     <div>
-      <p className="text-xs text-slate-400 mb-3">
-        Clinically-informed heuristic flags from today's check-in (sleep, medication, stress, triggers) — not a machine
-        prediction, shown separately from the AI's EEG-based risk score.
-      </p>
+      <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 mb-4 ${style.box}`}>
+        <span className="text-2xl">{style.emoji}</span>
+        <div>
+          <p className="font-semibold">Today's self-reported risk level: {style.label}</p>
+          <p className="text-xs opacity-80">Based on {factors.length} flagged factor{factors.length === 1 ? "" : "s"} from today's check-in — a heuristic summary, not a machine prediction.</p>
+        </div>
+      </div>
+
       {factors.length === 0 ? (
-        <p className="text-sm text-emerald-700 font-medium">No elevated self-reported risk factors today.</p>
+        <p className="text-sm text-emerald-700 font-medium mb-4">No elevated self-reported risk factors today.</p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 mb-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Factors contributing to today's assessment</p>
           {factors.map((f, i) => (
             <div key={i} className="flex items-start gap-2 text-sm">
               <span className="text-xs font-mono text-slate-400 w-5 shrink-0 mt-0.5">{String(i + 1).padStart(2, "0")}</span>
@@ -119,6 +128,28 @@ function CheckinRiskFactors({ checkin }) {
           ))}
         </div>
       )}
+
+      {comparisons.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Compared with your own recent average</p>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {comparisons.map((c) => (
+              <div key={c.field} className="bg-slate-50 rounded-lg px-3 py-2 text-sm">
+                <span className="text-slate-700">{c.label} today: <b>{c.today}</b></span>
+                <span className="text-slate-400"> · your average: {c.average}</span>
+                <span className={`ml-1 font-semibold ${c.direction === "higher" ? "text-red-600" : "text-blue-600"}`}>
+                  {c.direction === "higher" ? "↑ higher" : "↓ lower"} than usual
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-slate-400 mt-4 pt-3 border-t border-slate-100">
+        Clinically-informed heuristic flags from today's check-in — not a machine prediction, shown separately from the AI's
+        EEG-based risk score.
+      </p>
     </div>
   );
 }
@@ -694,10 +725,29 @@ function Alerts() {
 
 // ---- History & Analytics -----------------------------------------------------------
 
+const EMPTY_SEIZURE_EVENT = {
+  date: "", duration_minutes: "", severity: "moderate", recovery_time_minutes: "", prediction_accuracy: "",
+  activity_before: "", had_warning_aura: "", symptoms_occurred: "", lost_consciousness: "", fell: "",
+  unusual_movement: "", tongue_biting: "", incontinence: "", witness_present: "", witness_note: "", ems_required: "",
+};
+
+function YesNoUnsureField({ label, value, onChange, includeUnsure }) {
+  return (
+    <Field label={label}>
+      <select className={inputCls} value={value} onChange={onChange}>
+        <option value="">—</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+        {includeUnsure && <option value="unsure">Not sure</option>}
+      </select>
+    </Field>
+  );
+}
+
 function History() {
   const events = useApi("/api/patient/seizure-events");
   const trends = useApi("/api/patient/trends");
-  const [form, setForm] = useState({ date: "", duration_minutes: "", severity: "moderate", recovery_time_minutes: "", prediction_accuracy: "" });
+  const [form, setForm] = useState(EMPTY_SEIZURE_EVENT);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -716,9 +766,20 @@ function History() {
           severity: form.severity,
           recovery_time_minutes: form.recovery_time_minutes ? Number(form.recovery_time_minutes) : undefined,
           prediction_accuracy: form.prediction_accuracy ? Number(form.prediction_accuracy) : undefined,
+          activity_before: form.activity_before || undefined,
+          had_warning_aura: form.had_warning_aura || undefined,
+          symptoms_occurred: form.symptoms_occurred || undefined,
+          lost_consciousness: form.lost_consciousness || undefined,
+          fell: form.fell || undefined,
+          unusual_movement: form.unusual_movement || undefined,
+          tongue_biting: form.tongue_biting || undefined,
+          incontinence: form.incontinence || undefined,
+          witness_present: form.witness_present || undefined,
+          witness_note: form.witness_present === "yes" ? form.witness_note || undefined : undefined,
+          ems_required: form.ems_required || undefined,
         },
       });
-      setForm({ date: "", duration_minutes: "", severity: "moderate", recovery_time_minutes: "", prediction_accuracy: "" });
+      setForm(EMPTY_SEIZURE_EVENT);
       events.reload();
     } catch (err) {
       setError(err.message);
@@ -740,29 +801,61 @@ function History() {
 
       <Card title="Log a seizure event">
         <Alert>{error}</Alert>
-        <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
-          <Field label="Date/time (optional, defaults to now)">
-            <input type="datetime-local" className={inputCls} value={form.date} onChange={set("date")} />
-          </Field>
-          <Field label="Duration (minutes)">
-            <input type="number" min={1} required className={inputCls} value={form.duration_minutes} onChange={set("duration_minutes")} />
-          </Field>
-          <Field label="Severity">
-            <select className={inputCls} value={form.severity} onChange={set("severity")}>
-              <option value="mild">Mild</option>
-              <option value="moderate">Moderate</option>
-              <option value="severe">Severe</option>
-            </select>
-          </Field>
-          <Field label="Recovery time (minutes, optional)">
-            <input type="number" min={0} className={inputCls} value={form.recovery_time_minutes} onChange={set("recovery_time_minutes")} />
-          </Field>
-          <Field label="Was it predicted in advance? (0-100%, optional)">
-            <input type="number" min={0} max={100} className={inputCls} value={form.prediction_accuracy} onChange={set("prediction_accuracy")} />
-          </Field>
-          <div className="sm:col-span-2">
-            <Button type="submit" disabled={busy}>{busy && <Spinner />}Log event</Button>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="Date/time (optional, defaults to now)">
+              <input type="datetime-local" className={inputCls} value={form.date} onChange={set("date")} />
+            </Field>
+            <Field label="Duration (minutes)">
+              <input type="number" min={1} required className={inputCls} value={form.duration_minutes} onChange={set("duration_minutes")} />
+            </Field>
+            <Field label="Severity">
+              <select className={inputCls} value={form.severity} onChange={set("severity")}>
+                <option value="mild">Mild</option>
+                <option value="moderate">Moderate</option>
+                <option value="severe">Severe</option>
+              </select>
+            </Field>
+            <Field label="Recovery time (minutes, optional)">
+              <input type="number" min={0} className={inputCls} value={form.recovery_time_minutes} onChange={set("recovery_time_minutes")} />
+            </Field>
+            <Field label="Was it predicted in advance? (0-100%, optional)">
+              <input type="number" min={0} max={100} className={inputCls} value={form.prediction_accuracy} onChange={set("prediction_accuracy")} />
+            </Field>
           </div>
+
+          <details className="bg-slate-50 border border-slate-100 rounded-lg px-4 py-3">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-600">Add more details about this seizure (optional)</summary>
+            <div className="mt-4 grid sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <Field label="What were you doing immediately before it?">
+                  <input className={inputCls} value={form.activity_before} onChange={set("activity_before")} placeholder="e.g. watching TV, just woke up" />
+                </Field>
+              </div>
+              <YesNoUnsureField label="Did you have a warning/aura?" value={form.had_warning_aura} onChange={set("had_warning_aura")} includeUnsure />
+              <div className="sm:col-span-2">
+                <Field label="What symptoms occurred?">
+                  <input className={inputCls} value={form.symptoms_occurred} onChange={set("symptoms_occurred")} />
+                </Field>
+              </div>
+              <YesNoUnsureField label="Did you lose consciousness?" value={form.lost_consciousness} onChange={set("lost_consciousness")} includeUnsure />
+              <YesNoUnsureField label="Did you fall?" value={form.fell} onChange={set("fell")} />
+              <YesNoUnsureField label="Unusual movement or shaking?" value={form.unusual_movement} onChange={set("unusual_movement")} />
+              <YesNoUnsureField label="Tongue biting?" value={form.tongue_biting} onChange={set("tongue_biting")} />
+              <YesNoUnsureField label="Loss of bladder/bowel control?" value={form.incontinence} onChange={set("incontinence")} />
+              <YesNoUnsureField label="Was emergency medical assistance required?" value={form.ems_required} onChange={set("ems_required")} />
+              <YesNoUnsureField label="Did someone witness the seizure?" value={form.witness_present} onChange={set("witness_present")} />
+              {form.witness_present === "yes" && (
+                <div className="sm:col-span-2">
+                  <Field label="Additional information from the witness">
+                    <textarea rows={2} className={inputCls} value={form.witness_note} onChange={set("witness_note")} />
+                  </Field>
+                </div>
+              )}
+            </div>
+          </details>
+
+          <Button type="submit" disabled={busy}>{busy && <Spinner />}Log event</Button>
         </form>
       </Card>
 
@@ -771,18 +864,39 @@ function History() {
           <p className="text-sm text-slate-400">No seizure events logged yet.</p>
         ) : (
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {events.data.map((e) => (
-              <div key={e.id} className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
-                <div>
+            {events.data.map((e) => {
+              const details = [
+                e.activity_before && ["Before", e.activity_before],
+                e.had_warning_aura && ["Warning/aura", e.had_warning_aura],
+                e.symptoms_occurred && ["Symptoms", e.symptoms_occurred],
+                e.lost_consciousness && ["Lost consciousness", e.lost_consciousness],
+                e.fell && ["Fell", e.fell],
+                e.unusual_movement && ["Unusual movement", e.unusual_movement],
+                e.tongue_biting && ["Tongue biting", e.tongue_biting],
+                e.incontinence && ["Incontinence", e.incontinence],
+                e.ems_required && ["EMS required", e.ems_required],
+                e.witness_present && ["Witnessed", e.witness_present],
+                e.witness_note && ["Witness note", e.witness_note],
+              ].filter(Boolean);
+              return (
+                <div key={e.id} className="py-2.5 border-b border-slate-100 last:border-0">
                   <p className="text-sm font-medium text-slate-700">{fmtDate(e.date)}</p>
                   <p className="text-xs text-slate-400 capitalize">
                     {e.severity} · {e.duration_minutes} min
                     {e.recovery_time_minutes ? ` · ${e.recovery_time_minutes} min recovery` : ""}
                     {e.prediction_accuracy != null ? ` · ${e.prediction_accuracy}% predicted` : ""}
                   </p>
+                  {details.length > 0 && (
+                    <details className="mt-1.5 text-xs">
+                      <summary className="cursor-pointer font-semibold text-blue-800">Details</summary>
+                      <div className="mt-2 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-slate-500 capitalize">
+                        {details.map(([k, v]) => <div key={k}><span className="text-slate-400">{k}:</span> {v}</div>)}
+                      </div>
+                    </details>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -796,12 +910,32 @@ function History() {
 // AI-generated — see server/src/checkinRisk.js and the note on the card.
 
 const EMPTY_CHECKIN = {
+  warning_symptoms: [], warning_symptoms_other: "",
+  compared_to_usual: "",
   sleep_hours: "", sleep_quality: "", woke_frequently: "",
   medication_taken: "", medication_late: "",
   stress_level: "", anxiety_level: "", fatigue_level: "",
   illness: "none", ate_normally: "", hydrated: "", strenuous_exercise: "",
   alcohol: "", caffeine_more_than_usual: "", recreational_drugs: "",
   known_trigger_experienced: "", trigger_note: "",
+};
+
+const WARNING_SYMPTOM_OPTIONS = [
+  ["unusual_smell_taste", "Unusual smell/taste"], ["deja_vu", "Déjà vu"], ["dizziness", "Dizziness"],
+  ["visual_changes", "Visual changes"], ["tingling_numbness", "Tingling/numbness"], ["confusion", "Confusion"],
+  ["sudden_fear_anxiety", "Sudden fear/anxiety"], ["unusual_sounds", "Unusual sounds"], ["headache", "Headache"],
+  ["other", "Other"],
+];
+
+const COMPARED_TO_USUAL_OPTIONS = [
+  ["much_better", "Much better than usual"], ["slightly_better", "Slightly better"], ["normal", "Normal"],
+  ["slightly_worse", "Slightly worse"], ["much_worse", "Much worse than usual"],
+];
+
+const RISK_LEVEL_STYLES = {
+  low: { emoji: "🟢", label: "Low", box: "bg-green-50 border-green-200 text-green-800" },
+  moderate: { emoji: "🟡", label: "Moderate", box: "bg-amber-50 border-amber-200 text-amber-800" },
+  elevated: { emoji: "🔴", label: "Elevated", box: "bg-red-50 border-red-300 text-red-800" },
 };
 
 function boolToStr(v) { return v === true ? "yes" : v === false ? "no" : ""; }
@@ -837,6 +971,8 @@ function DailyCheckin() {
   useEffect(() => {
     if (!loading && !form) {
       setForm(data ? {
+        warning_symptoms: data.warning_symptoms || [], warning_symptoms_other: data.warning_symptoms_other || "",
+        compared_to_usual: data.compared_to_usual || "",
         sleep_hours: data.sleep_hours ?? "", sleep_quality: data.sleep_quality || "", woke_frequently: boolToStr(data.woke_frequently),
         medication_taken: data.medication_taken || "", medication_late: boolToStr(data.medication_late),
         stress_level: data.stress_level ?? "", anxiety_level: data.anxiety_level ?? "", fatigue_level: data.fatigue_level ?? "",
@@ -852,6 +988,8 @@ function DailyCheckin() {
   if (loadError) return <Alert>{loadError}</Alert>;
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const toggleSymptom = (key) => setForm({ ...form, warning_symptoms: form.warning_symptoms.includes(key) ? form.warning_symptoms.filter((s) => s !== key) : [...form.warning_symptoms, key] });
+  const clearSymptoms = () => setForm({ ...form, warning_symptoms: [], warning_symptoms_other: "" });
 
   const submit = async (e) => {
     e.preventDefault();
@@ -862,6 +1000,9 @@ function DailyCheckin() {
       await api("/api/patient/checkin", {
         method: "POST",
         body: {
+          warning_symptoms: form.warning_symptoms,
+          warning_symptoms_other: form.warning_symptoms.includes("other") ? form.warning_symptoms_other : undefined,
+          compared_to_usual: form.compared_to_usual || undefined,
           sleep_hours: form.sleep_hours === "" ? undefined : Number(form.sleep_hours),
           sleep_quality: form.sleep_quality || undefined,
           woke_frequently: strToBool(form.woke_frequently),
@@ -890,6 +1031,14 @@ function DailyCheckin() {
     }
   };
 
+  // Adaptive: exact sleep hours only matter enough to ask when quality was
+  // rated poor — keeps the everyday form short without losing the detail
+  // that actually changes the risk assessment (per checkinRisk.js).
+  const showSleepHours = ["poor", "very_poor"].includes(form.sleep_quality);
+  // Adaptive: the "missed vs late" follow-up only makes sense once they've
+  // said medication wasn't taken cleanly as prescribed.
+  const showMedicationFollowup = form.medication_taken === "no" || form.medication_taken === "partially";
+
   return (
     <div className="space-y-6">
       <Card title={`Today's check-in${data ? " (already submitted — editing will update it)" : ""}`}>
@@ -897,21 +1046,69 @@ function DailyCheckin() {
         <Alert kind="success">{saved ? "Check-in saved." : ""}</Alert>
         <form onSubmit={submit} className="space-y-6">
           <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Possible warning symptoms</p>
+            <p className="text-xs text-slate-400 mb-3">Are you experiencing any unusual symptoms that you normally associate with an upcoming seizure?</p>
+            <div className="flex flex-wrap gap-2">
+              {WARNING_SYMPTOM_OPTIONS.map(([key, label]) => (
+                <button
+                  key={key} type="button" onClick={() => toggleSymptom(key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                    form.warning_symptoms.includes(key) ? "bg-red-600 text-white border-red-600" : "bg-white text-slate-600 border-slate-200 hover:border-red-300"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button" onClick={clearSymptoms}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                  form.warning_symptoms.length === 0 ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-600 border-slate-200 hover:border-emerald-300"
+                }`}
+              >
+                None
+              </button>
+            </div>
+            {form.warning_symptoms.includes("other") && (
+              <div className="mt-3">
+                <input className={inputCls} value={form.warning_symptoms_other} onChange={set("warning_symptoms_other")} placeholder="Describe the symptom" />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Compared with your usual day, does today feel different?</p>
+            <div className="flex flex-wrap gap-2">
+              {COMPARED_TO_USUAL_OPTIONS.map(([key, label]) => (
+                <button
+                  key={key} type="button" onClick={() => setForm({ ...form, compared_to_usual: key })}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                    form.compared_to_usual === key ? "bg-blue-900 text-white border-blue-900" : "bg-white text-slate-600 border-slate-200 hover:border-blue-300"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Sleep</p>
             <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Hours of sleep last night">
-                <input type="number" min={0} max={24} step={0.5} placeholder="e.g. 7" className={inputCls} value={form.sleep_hours} onChange={set("sleep_hours")} />
-              </Field>
-              <Field label="Sleep quality">
+              <Field label="How was your sleep last night?">
                 <select className={inputCls} value={form.sleep_quality} onChange={set("sleep_quality")}>
                   <option value="">—</option>
-                  <option value="very_good">Very good</option>
-                  <option value="good">Good</option>
-                  <option value="average">Average</option>
-                  <option value="poor">Poor</option>
-                  <option value="very_poor">Very poor</option>
+                  <option value="very_good">🙂 Very good</option>
+                  <option value="good">🙂 Good</option>
+                  <option value="average">😐 Average</option>
+                  <option value="poor">😴 Poor</option>
+                  <option value="very_poor">😴 Very poor</option>
                 </select>
               </Field>
+              {showSleepHours && (
+                <Field label="How many hours did you sleep?">
+                  <input type="number" min={0} max={24} step={0.5} placeholder="e.g. 4.5" className={inputCls} value={form.sleep_hours} onChange={set("sleep_hours")} autoFocus />
+                </Field>
+              )}
               <YesNoField label="Woke up frequently during the night?" value={form.woke_frequently} onChange={set("woke_frequently")} />
             </div>
           </div>
@@ -927,7 +1124,15 @@ function DailyCheckin() {
                   <option value="partially">Partially</option>
                 </select>
               </Field>
-              <YesNoField label="Any dose later than usual?" value={form.medication_late} onChange={set("medication_late")} />
+              {showMedicationFollowup && (
+                <Field label="Was it missed completely or taken late?">
+                  <select className={inputCls} value={form.medication_late === "yes" ? "late" : form.medication_late === "no" ? "missed" : ""} onChange={(e) => setForm({ ...form, medication_late: e.target.value === "late" ? "yes" : e.target.value === "missed" ? "no" : "" })}>
+                    <option value="">—</option>
+                    <option value="missed">Missed completely</option>
+                    <option value="late">Taken late</option>
+                  </select>
+                </Field>
+              )}
             </div>
           </div>
 

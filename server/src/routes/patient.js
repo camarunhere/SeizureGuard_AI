@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireRole } from "../auth.js";
-import { checkinRiskFactors } from "../checkinRisk.js";
+import { checkinRiskFactors, checkinRiskLevel, compareToBaseline } from "../checkinRisk.js";
 import { mlMetadata } from "../mlClient.js";
 import { Alert, DailyCheckin, Prediction, SeizureEvent, SensorReading, User, logActivity } from "../models.js";
 import { predictionPayload, readingPayload, runMonitoringTick } from "../services.js";
@@ -100,11 +100,35 @@ function startOfDay(d) {
   return day;
 }
 
-function checkinPayload(c) {
+const WARNING_SYMPTOMS = [
+  "unusual_smell_taste", "deja_vu", "dizziness", "visual_changes", "tingling_numbness",
+  "confusion", "sudden_fear_anxiety", "unusual_sounds", "headache", "other",
+];
+
+function checkinFields(c) {
+  return {
+    warningSymptoms: c.warningSymptoms, warningSymptomsOther: c.warningSymptomsOther,
+    sleepHours: c.sleepHours, sleepQuality: c.sleepQuality, wokeFrequently: c.wokeFrequently,
+    medicationTaken: c.medicationTaken, medicationLate: c.medicationLate,
+    stressLevel: c.stressLevel, anxietyLevel: c.anxietyLevel, fatigueLevel: c.fatigueLevel,
+    illness: c.illness, ateNormally: c.ateNormally, hydrated: c.hydrated, strenuousExercise: c.strenuousExercise,
+    alcohol: c.alcohol, caffeineMoreThanUsual: c.caffeineMoreThanUsual, recreationalDrugs: c.recreationalDrugs,
+    knownTriggerExperienced: c.knownTriggerExperienced, triggerNote: c.triggerNote, comparedToUsual: c.comparedToUsual,
+  };
+}
+
+// `history` (recent DailyCheckin docs, most-recent-first, optional) enables
+// the real statistical "compared to your own baseline" comparison — see
+// compareToBaseline in checkinRisk.js. Omit it (e.g. for /checkin/history
+// list items) to skip that comparison and save the extra computation.
+function checkinPayload(c, history) {
   if (!c) return null;
+  const riskFactors = checkinRiskFactors(checkinFields(c));
   return {
     id: String(c._id),
     date: c.date.toISOString().slice(0, 10),
+    warning_symptoms: c.warningSymptoms || [],
+    warning_symptoms_other: c.warningSymptomsOther || "",
     sleep_hours: c.sleepHours ?? null,
     sleep_quality: c.sleepQuality || null,
     woke_frequently: c.wokeFrequently ?? null,
@@ -122,27 +146,32 @@ function checkinPayload(c) {
     recreational_drugs: c.recreationalDrugs ?? null,
     known_trigger_experienced: c.knownTriggerExperienced ?? null,
     trigger_note: c.triggerNote || "",
-    risk_factors: checkinRiskFactors({
-      sleepHours: c.sleepHours, sleepQuality: c.sleepQuality, wokeFrequently: c.wokeFrequently,
-      medicationTaken: c.medicationTaken, medicationLate: c.medicationLate,
-      stressLevel: c.stressLevel, anxietyLevel: c.anxietyLevel, fatigueLevel: c.fatigueLevel,
-      illness: c.illness, ateNormally: c.ateNormally, hydrated: c.hydrated, strenuousExercise: c.strenuousExercise,
-      alcohol: c.alcohol, caffeineMoreThanUsual: c.caffeineMoreThanUsual, recreationalDrugs: c.recreationalDrugs,
-      knownTriggerExperienced: c.knownTriggerExperienced, triggerNote: c.triggerNote,
-    }),
+    compared_to_usual: c.comparedToUsual || null,
+    risk_factors: riskFactors,
+    risk_level: checkinRiskLevel(riskFactors),
+    baseline_comparison: history ? compareToBaseline(c, history) : null,
   };
 }
 
 router.get("/checkin/today", patientOnly, async (req, res) => {
   const today = startOfDay(new Date());
-  const checkin = await DailyCheckin.findOne({ patient: req.user._id, date: today });
-  res.json(checkinPayload(checkin));
+  const [checkin, history] = await Promise.all([
+    DailyCheckin.findOne({ patient: req.user._id, date: today }),
+    DailyCheckin.find({ patient: req.user._id }).sort({ date: -1 }).limit(30),
+  ]);
+  res.json(checkinPayload(checkin, history));
 });
 
 router.post("/checkin", patientOnly, async (req, res) => {
   const b = req.body || {};
+  if (b.warning_symptoms != null) {
+    if (!Array.isArray(b.warning_symptoms) || b.warning_symptoms.some((s) => !WARNING_SYMPTOMS.includes(s))) {
+      return res.status(422).json({ detail: "warning_symptoms must be an array of recognised symptom keys." });
+    }
+  }
   const today = startOfDay(new Date());
   const update = {
+    warningSymptoms: b.warning_symptoms, warningSymptomsOther: b.warning_symptoms_other,
     sleepHours: b.sleep_hours != null ? Number(b.sleep_hours) : undefined,
     sleepQuality: b.sleep_quality, wokeFrequently: b.woke_frequently,
     medicationTaken: b.medication_taken, medicationLate: b.medication_late,
@@ -153,22 +182,26 @@ router.post("/checkin", patientOnly, async (req, res) => {
     strenuousExercise: b.strenuous_exercise, alcohol: b.alcohol,
     caffeineMoreThanUsual: b.caffeine_more_than_usual, recreationalDrugs: b.recreational_drugs,
     knownTriggerExperienced: b.known_trigger_experienced, triggerNote: b.trigger_note,
+    comparedToUsual: b.compared_to_usual,
   };
   Object.keys(update).forEach((k) => update[k] === undefined && delete update[k]);
 
-  const checkin = await DailyCheckin.findOneAndUpdate(
-    { patient: req.user._id, date: today },
-    { $set: update, $setOnInsert: { patient: req.user._id, date: today } },
-    { upsert: true, new: true }
-  );
+  const [checkin, history] = await Promise.all([
+    DailyCheckin.findOneAndUpdate(
+      { patient: req.user._id, date: today },
+      { $set: update, $setOnInsert: { patient: req.user._id, date: today } },
+      { upsert: true, new: true, runValidators: true }
+    ),
+    DailyCheckin.find({ patient: req.user._id }).sort({ date: -1 }).limit(30),
+  ]);
   await logActivity(req.user, "daily_checkin");
-  res.json(checkinPayload(checkin));
+  res.json(checkinPayload(checkin, history));
 });
 
 router.get("/checkin/history", patientOnly, async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 30, 90);
   const checkins = await DailyCheckin.find({ patient: req.user._id }).sort({ date: -1 }).limit(limit);
-  res.json(checkins.map(checkinPayload));
+  res.json(checkins.map((c) => checkinPayload(c)));
 });
 
 // ---- Who's monitoring me (caregivers/clinicians linked via my patient code) ----
@@ -316,31 +349,57 @@ router.post("/alerts/:id/acknowledge", patientOnly, async (req, res) => {
 
 // ---- History and Analytics ------------------------------------------------------
 
-router.get("/seizure-events", patientOnly, async (req, res) => {
-  const events = await SeizureEvent.find({ patient: req.user._id }).sort({ date: -1 });
-  res.json(events.map((e) => ({
+function seizureEventPayload(e) {
+  return {
     id: String(e._id),
     date: e.date.toISOString(),
     duration_minutes: e.durationMinutes,
     severity: e.severity,
     recovery_time_minutes: e.recoveryTimeMinutes,
     prediction_accuracy: e.predictionAccuracy,
-  })));
+    activity_before: e.activityBefore || "",
+    had_warning_aura: e.hadWarningAura || "",
+    symptoms_occurred: e.symptomsOccurred || "",
+    lost_consciousness: e.lostConsciousness || "",
+    fell: e.fell || "",
+    unusual_movement: e.unusualMovement || "",
+    tongue_biting: e.tongueBiting || "",
+    incontinence: e.incontinence || "",
+    witness_present: e.witnessPresent || "",
+    witness_note: e.witnessNote || "",
+    ems_required: e.emsRequired || "",
+  };
+}
+
+router.get("/seizure-events", patientOnly, async (req, res) => {
+  const events = await SeizureEvent.find({ patient: req.user._id }).sort({ date: -1 });
+  res.json(events.map(seizureEventPayload));
 });
 
 router.post("/seizure-events", patientOnly, async (req, res) => {
-  const { date, duration_minutes, severity, recovery_time_minutes, prediction_accuracy } = req.body || {};
-  if (!duration_minutes || duration_minutes <= 0)
+  const b = req.body || {};
+  if (!b.duration_minutes || b.duration_minutes <= 0)
     return res.status(422).json({ detail: "Duration (minutes) is required." });
   const event = await SeizureEvent.create({
     patient: req.user._id,
-    date: date ? new Date(date) : new Date(),
-    durationMinutes: duration_minutes,
-    severity: severity || "moderate",
-    recoveryTimeMinutes: recovery_time_minutes || null,
-    predictionAccuracy: prediction_accuracy ?? null,
+    date: b.date ? new Date(b.date) : new Date(),
+    durationMinutes: b.duration_minutes,
+    severity: b.severity || "moderate",
+    recoveryTimeMinutes: b.recovery_time_minutes || null,
+    predictionAccuracy: b.prediction_accuracy ?? null,
+    activityBefore: b.activity_before || "",
+    hadWarningAura: b.had_warning_aura || "",
+    symptomsOccurred: b.symptoms_occurred || "",
+    lostConsciousness: b.lost_consciousness || "",
+    fell: b.fell || "",
+    unusualMovement: b.unusual_movement || "",
+    tongueBiting: b.tongue_biting || "",
+    incontinence: b.incontinence || "",
+    witnessPresent: b.witness_present || "",
+    witnessNote: b.witness_note || "",
+    emsRequired: b.ems_required || "",
   });
-  await logActivity(req.user, "log_seizure_event", `${duration_minutes}min`);
+  await logActivity(req.user, "log_seizure_event", `${b.duration_minutes}min`);
   res.json({ message: "Seizure event logged.", id: String(event._id) });
 });
 
