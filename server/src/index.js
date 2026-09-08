@@ -6,13 +6,22 @@ import { ensureMlService } from "./mlProcess.js";
 import { mlHealth } from "./mlClient.js";
 import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patient.js";
-import caregiverRoutes from "./routes/caregiver.js";
 import clinicianRoutes from "./routes/clinician.js";
 import adminRoutes from "./routes/admin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIST = path.resolve(__dirname, "..", "..", "frontend", "dist");
 const PORT = process.env.PORT || 8090;
+
+// Express 4 doesn't route a rejected promise from an async handler to error
+// middleware on its own — an uncaught one (e.g. an invalid ObjectId cast)
+// becomes an unhandledRejection and takes the whole Node process down,
+// dropping every other in-flight user's request too. This net converts that
+// into a logged error instead of a full outage; the specific triggering
+// route should still be fixed to fail cleanly, but this stops one bad
+// request from being able to kill the server for everyone.
+process.on("unhandledRejection", (err) => console.error("[unhandledRejection]", err));
+process.on("uncaughtException", (err) => console.error("[uncaughtException]", err));
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -24,7 +33,6 @@ app.get("/health", async (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/patient", patientRoutes);
-app.use("/api/caregiver", caregiverRoutes);
 app.use("/api/clinician", clinicianRoutes);
 app.use("/api/admin", adminRoutes);
 

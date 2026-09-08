@@ -4,7 +4,7 @@ const FEATURES = [
   { icon: "🧠", title: "AI-Based Seizure Prediction", text: "A CNN + BiLSTM + Transformer deep learning model trained on real EEG recordings predicts seizure risk before it happens." },
   { icon: "⌚", title: "Real-Time Health Monitoring", text: "Continuous EEG and wearable biosensor monitoring — heart rate, SpO₂, movement, and temperature." },
   { icon: "💡", title: "Explainable AI (XAI)", text: "Every prediction comes with plain-English reasons and SHAP feature importance — never a black box." },
-  { icon: "🚨", title: "Patient Safety Alerts", text: "High-risk predictions immediately notify caregivers and clinicians so help arrives before a seizure, not after." },
+  { icon: "🚨", title: "Patient Safety Alerts", text: "High-risk predictions immediately notify linked clinicians so help arrives before a seizure, not after." },
   { icon: "🩺", title: "Clinical Dashboard", text: "Clinicians monitor multiple patients at once, review AI reports, and log clinical decisions." },
   { icon: "📡", title: "Wearable Integration", text: "Designed around EEG headsets and wearable biosensors feeding a multi-agent AI pipeline in real time." },
 ];
@@ -39,7 +39,7 @@ export default function LandingPage({ onGetStarted }) {
           </h1>
           <p className="text-lg text-slate-600 mt-5 max-w-2xl mx-auto">
             Combining wearable sensors, deep learning, and Explainable AI to improve epilepsy management —
-            for patients, caregivers, and clinicians.
+            for patients and clinicians.
           </p>
           <div className="flex items-center justify-center gap-4 mt-8">
             <button onClick={onGetStarted} className="px-6 py-3 rounded-xl text-base font-semibold bg-blue-950 hover:bg-blue-900 text-white shadow-lg shadow-blue-950/20 transition">
@@ -57,7 +57,7 @@ export default function LandingPage({ onGetStarted }) {
               SeizureGuard AI is a clinical decision support platform designed to predict epileptic seizures
               early using multimodal patient data collected from EEG and wearable biosensors — combining
               AI agents, deep learning, and Explainable AI to provide real-time monitoring, seizure risk
-              prediction, and understandable explanations for patients, caregivers, and clinicians.
+              prediction, and understandable explanations for patients and clinicians.
             </p>
           </div>
         </section>

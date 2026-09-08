@@ -2,7 +2,12 @@ import { useState } from "react";
 import { api, useApi } from "./api";
 import { Alert, Button, Card, Field, Skeleton, Spinner, classLabel, fmtDate, inputCls, primaryContributors, RiskBadge, RiskFingerprint } from "./ui";
 
-export default function ClinicianPortal() {
+export default function ClinicianPortal({ tab }) {
+  if (tab === "medications") return <MedicationAssistant />;
+  return <PatientsTab />;
+}
+
+function PatientsTab() {
   const { data, loading, error, reload } = useApi("/api/clinician/patients");
   const [selected, setSelected] = useState(null);
 
@@ -16,7 +21,7 @@ export default function ClinicianPortal() {
 
       <Card title="Patients under your care">
         {loading ? <Skeleton lines={4} /> : error ? <Alert>{error}</Alert> : !data.length ? (
-          <p className="text-sm text-slate-400">No patients linked yet — enter a patient's code above.</p>
+          <p className="text-sm text-slate-400">No patients linked yet — search for one by name above.</p>
         ) : (
           <div className="space-y-2">
             {data.map((p) => (
@@ -28,7 +33,9 @@ export default function ClinicianPortal() {
                 }`}
               >
                 <div>
-                  <p className="text-sm font-semibold text-slate-700">{p.full_name}{p.age ? `, ${p.age}` : ""}</p>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {p.full_name}{p.age ? `, ${p.age}` : ""} <span className="text-slate-400 font-mono font-normal">#{p.code}</span>
+                  </p>
                   <p className="text-xs text-slate-400">
                     {p.ai_confidence != null ? `${p.ai_confidence}% AI confidence` : "No predictions yet"}
                     {p.last_seizure ? ` · last seizure ${fmtDate(p.last_seizure)}` : ""}
@@ -46,37 +53,56 @@ export default function ClinicianPortal() {
   );
 }
 
+// Search-by-name replaces the old shareable-code linking flow — the
+// directory lists every registered patient not already linked to this
+// clinician, filtered client-side as they type a name.
 function LinkPatientForm({ onLinked }) {
-  const [code, setCode] = useState("");
+  const { data, loading, error: loadError, reload } = useApi("/api/clinician/directory");
+  const [query, setQuery] = useState("");
+  const [linkingId, setLinkingId] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const link = async (patient) => {
     setError("");
-    setBusy(true);
+    setLinkingId(patient.id);
     try {
-      await api("/api/clinician/link", { method: "POST", body: { patient_code: code } });
-      setCode("");
+      await api("/api/clinician/link", { method: "POST", body: { patient_id: patient.id } });
+      reload();
       onLinked();
     } catch (err) {
       setError(err.message);
     } finally {
-      setBusy(false);
+      setLinkingId(null);
     }
   };
 
+  const matches = (data || []).filter((p) => p.full_name.toLowerCase().includes(query.trim().toLowerCase()));
+
   return (
     <Card title="Link to a patient">
-      <Alert>{error}</Alert>
-      <form onSubmit={submit} className="flex items-end gap-3">
-        <div className="flex-1">
-          <Field label="Patient code">
-            <input className={inputCls} placeholder="PT-XXXXXX" value={code} onChange={(e) => setCode(e.target.value)} required />
-          </Field>
-        </div>
-        <Button type="submit" disabled={busy}>{busy && <Spinner />}Link</Button>
-      </form>
+      <p className="text-xs text-slate-400 -mt-2 mb-4">Search by name to link a new patient to your care.</p>
+      <Alert>{error || loadError}</Alert>
+      <Field label="Patient name">
+        <input className={inputCls} placeholder="Start typing a name…" value={query} onChange={(e) => setQuery(e.target.value)} />
+      </Field>
+      {loading ? <Skeleton lines={2} /> : query.trim() && (
+        matches.length === 0 ? (
+          <p className="text-sm text-slate-400 mt-2">No matching unlinked patient found.</p>
+        ) : (
+          <div className="space-y-2 mt-2 max-h-56 overflow-y-auto">
+            {matches.map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <span className="text-slate-700">
+                  {p.full_name}{p.age ? `, ${p.age}` : ""} <span className="text-slate-400 font-mono">#{p.code}</span>
+                </span>
+                <Button variant="subtle" className="text-xs px-3 py-1" onClick={() => link(p)} disabled={linkingId === p.id}>
+                  {linkingId === p.id && <Spinner />}Link
+                </Button>
+              </div>
+            ))}
+          </div>
+        )
+      )}
     </Card>
   );
 }
@@ -92,12 +118,22 @@ function PatientReview({ patientId, onUnlink }) {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <Card title={`${patient.full_name}'s chart`} className="relative">
+      <Card title={`${patient.full_name}'s chart (#${patient.code})`} className="relative">
         <button onClick={onUnlink} className="absolute top-6 right-6 text-xs font-semibold text-red-500 hover:text-red-700">Unlink</button>
-        <div className="grid sm:grid-cols-3 gap-4 text-sm">
+        <div className="grid sm:grid-cols-2 gap-4 text-sm">
           <div><p className="text-xs uppercase tracking-wide text-slate-400">Age</p><p className="font-medium text-slate-700">{patient.age ?? "—"}</p></div>
-          <div><p className="text-xs uppercase tracking-wide text-slate-400">Patient code</p><p className="font-medium text-slate-700">{patient.patient_code}</p></div>
           <div><p className="text-xs uppercase tracking-wide text-slate-400">Medical history</p><p className="font-medium text-slate-700">{patient.medical_history || "—"}</p></div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-slate-100 text-sm">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Current medications</p>
+          <p className="font-medium text-slate-700 whitespace-pre-wrap">{patient.medications || "None recorded"}</p>
+          {patient.medications && (
+            <p className="text-xs mt-1">
+              {patient.medications_prescribed_by
+                ? <span className="text-emerald-600 font-medium">✓ Prescribed by {patient.medications_prescribed_by} on {fmtDate(patient.medications_prescribed_at)}</span>
+                : <span className="text-slate-400">Self-reported by the patient — not yet confirmed by a clinician.</span>}
+            </p>
+          )}
         </div>
         {latest_vitals && (
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 text-sm mt-4 pt-4 border-t border-slate-100">
@@ -273,6 +309,142 @@ function AiReport({ patientId, predictionId, onClose }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---- AI Medication Assistant -----------------------------------------------------
+// An LLM drafts anti-epileptic medication considerations from a patient's
+// condition (baseline info, seizure history, latest AI risk reading) — NOT a
+// trained clinical model (no dataset here maps patient profiles to real
+// prescribing outcomes) and NEVER auto-applied: it's a draft the clinician
+// must explicitly review, edit, and apply to the patient's record.
+function MedicationAssistant() {
+  const patients = useApi("/api/clinician/patients");
+  const [selectedId, setSelectedId] = useState("");
+  const [loadedId, setLoadedId] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const generate = async (e) => {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    setResult(null);
+    try {
+      const data = await api(`/api/clinician/patients/${selectedId}/medication-suggestions`, { method: "POST" });
+      setResult(data);
+      setLoadedId(selectedId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card title="Generate AI medication suggestions">
+        <p className="text-xs text-slate-400 -mt-2 mb-4">
+          Pick a patient linked to you to draft AED therapy considerations from their recorded condition. This is an
+          AI (LLM) draft, not a trained prescribing model and not a prescription — always review before applying
+          anything to a patient's chart.
+        </p>
+        <Alert>{error}</Alert>
+        <form onSubmit={generate} className="flex items-end gap-3">
+          <div className="flex-1">
+            <Field label="Patient">
+              {patients.loading ? <Skeleton lines={1} /> : patients.error ? <Alert>{patients.error}</Alert> : !patients.data.length ? (
+                <p className="text-sm text-slate-400">No patients linked yet — link one on the Patients tab first.</p>
+              ) : (
+                <select className={inputCls} value={selectedId} onChange={(e) => setSelectedId(e.target.value)} required>
+                  <option value="">Select a patient…</option>
+                  {patients.data.map((p) => (
+                    <option key={p.id} value={p.id}>{p.full_name}{p.age ? `, ${p.age}` : ""} (#{p.code})</option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          </div>
+          <Button type="submit" disabled={busy || !selectedId}>{busy && <Spinner />}Generate</Button>
+        </form>
+      </Card>
+
+      {result && <MedicationDraft key={loadedId} result={result} />}
+    </div>
+  );
+}
+
+function MedicationDraft({ result }) {
+  const [medications, setMedications] = useState(() => result.suggestions.map((s) => s.medication).filter(Boolean).join(", "));
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyError, setApplyError] = useState("");
+  const [applied, setApplied] = useState(false);
+
+  const apply = async () => {
+    setApplyError("");
+    setApplyBusy(true);
+    try {
+      await api(`/api/clinician/patients/${result.patient_id}/medications`, { method: "POST", body: { medications } });
+      setApplied(true);
+    } catch (err) {
+      setApplyError(err.message);
+    } finally {
+      setApplyBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 animate-fade-in-up">
+      <Card title={`Draft for ${result.patient_name}`}>
+        <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold px-3 py-2 mb-4">
+          {result.source === "rule_based"
+            ? "⚠️ No AI API key configured — showing RULE-BASED reference suggestions from standard AED guidelines by seizure type, not personalized LLM reasoning. Not a prescription."
+            : "⚠️ AI-generated draft — not a prescription. Verify dosing, interactions, and contraindications independently before applying."}
+        </div>
+
+        {result.summary && <p className="text-sm text-slate-700 mb-4">{result.summary}</p>}
+
+        {result.suggestions.length > 0 && (
+          <div className="space-y-3 mb-4">
+            {result.suggestions.map((s, i) => (
+              <div key={i} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-800">{s.medication}</p>
+                {s.rationale && <p className="text-xs text-slate-500 mt-1"><span className="font-semibold">Why:</span> {s.rationale}</p>}
+                {s.considerations && <p className="text-xs text-slate-500 mt-1"><span className="font-semibold">Considerations:</span> {s.considerations}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {result.warnings.length > 0 && (
+          <ul className="space-y-1.5 mb-4">
+            {result.warnings.map((w, i) => (
+              <li key={i} className="text-xs text-red-700 bg-red-50 rounded-lg px-3 py-2">⚠️ {w}</li>
+            ))}
+          </ul>
+        )}
+
+        <details className="mb-4">
+          <summary className="text-xs font-semibold text-slate-400 cursor-pointer">What condition data was sent to the AI?</summary>
+          <pre className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">{result.condition_summary}</pre>
+        </details>
+
+        <div className="pt-4 border-t border-slate-100">
+          <Field label="Medications to apply to this patient's record (edit before applying)">
+            <textarea rows={2} className={inputCls} value={medications} onChange={(e) => setMedications(e.target.value)} />
+          </Field>
+          <Alert>{applyError}</Alert>
+          {applied ? (
+            <p className="text-sm font-semibold text-emerald-600 mt-2">✓ Applied to the patient's record.</p>
+          ) : (
+            <Button className="mt-2" onClick={apply} disabled={applyBusy || !medications.trim()}>
+              {applyBusy && <Spinner />}Apply to patient record
+            </Button>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }

@@ -3,10 +3,13 @@ import { api, clearSession, getStoredUser, getToken } from "./api";
 import LandingPage from "./LandingPage";
 import AuthPage from "./AuthPage";
 import PatientPortal from "./PatientPortal";
-import CaregiverPortal from "./CaregiverPortal";
 import ClinicianPortal from "./ClinicianPortal";
 import AdminPortal from "./AdminPortal";
 import Background, { BG_TINTS } from "./Background";
+import { AlertToastHost } from "./ui";
+import { useDesktopAlertNotifications } from "./notifications";
+
+const ALERTS_PATH = { patient: "/api/patient/alerts" };
 
 const NAV = {
   patient: [
@@ -21,12 +24,9 @@ const NAV = {
     ["baseline", "Baseline Info"],
     ["profile", "Profile"],
   ],
-  caregiver: [
-    ["patients", "My Patients"],
-    ["alerts", "Alerts"],
-  ],
   clinician: [
     ["patients", "Patients"],
+    ["medications", "AI Medication Assistant"],
   ],
   admin: [
     ["clinicians", "Clinician Approvals"],
@@ -44,14 +44,11 @@ const PAGE_HERO = {
     alerts: ["🚨", "Emergency Alerts", "Immediate response when high seizure risk is detected.", "from-red-700 via-rose-700 to-red-800"],
     history: ["📊", "History & Analytics", "Long-term seizure history and health trends.", "from-teal-700 via-emerald-700 to-cyan-700"],
     baseline: ["🩹", "Baseline Info", "Your diagnosis, medications, and known triggers — collected once, editable anytime.", "from-indigo-900 via-blue-900 to-slate-800"],
-    profile: ["👤", "Profile", "Your details and shareable patient code.", "from-slate-700 via-blue-900 to-slate-800"],
-  },
-  caregiver: {
-    patients: ["🤝", "My Patients", "Monitor the people in your care, remotely.", "from-teal-700 via-emerald-700 to-cyan-700"],
-    alerts: ["🚨", "Emergency Alerts", "Notifications the moment risk is detected.", "from-red-700 via-rose-700 to-red-800"],
+    profile: ["👤", "Profile", "Your details and account settings.", "from-slate-700 via-blue-900 to-slate-800"],
   },
   clinician: {
     patients: ["🩺", "Clinical Dashboard", "Multi-patient monitoring, AI reports, clinical decision support.", "from-blue-900 via-indigo-800 to-slate-800"],
+    medications: ["💊", "AI Medication Assistant", "AI-drafted medication suggestions from a patient's condition — always a draft for your review, never auto-prescribed.", "from-violet-800 via-purple-800 to-indigo-900"],
   },
   admin: {
     clinicians: ["🛡️", "Clinician Approvals", "Review and approve clinician registrations before they can log in.", "from-slate-900 via-blue-950 to-slate-800"],
@@ -60,8 +57,7 @@ const PAGE_HERO = {
 
 const PAGE_BG = {
   patient: { dashboard: "brain", checkin: "profile", live: "livewave", predictions: "network", xai: "insight", benchmark: "network", alerts: "alert", history: "timeline", baseline: "profile", profile: "profile" },
-  caregiver: { patients: "link", alerts: "alert" },
-  clinician: { patients: "clinical" },
+  clinician: { patients: "clinical", medications: "insight" },
   admin: { clinicians: "clinical" },
 };
 
@@ -69,6 +65,11 @@ export default function App() {
   const [view, setView] = useState(() => (getToken() ? "app" : "landing")); // landing | auth | app
   const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null));
   const [tab, setTab] = useState(null);
+
+  const notif = useDesktopAlertNotifications(
+    user ? ALERTS_PATH[user.role] : null,
+    view === "app" && !!user && !!ALERTS_PATH[user?.role],
+  );
 
   if (view === "landing" && !user) return <LandingPage onGetStarted={() => setView("auth")} />;
   if (!user) return <AuthPage onLogin={(u) => { setUser(u); setTab(NAV[u.role][0][0]); setView("app"); }} onBack={() => setView("landing")} />;
@@ -90,6 +91,7 @@ export default function App() {
   return (
       <div className={`min-h-screen ${BG_TINTS[bgVariant] || "bg-slate-100"}`}>
         <Background variant={bgVariant} />
+        <AlertToastHost notif={notif} />
         <header className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 border-b border-white/10 sticky top-0 z-20 shadow-lg shadow-slate-900/20">
           <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-4">
             <div className="font-bold text-white whitespace-nowrap">🧠 SeizureGuard AI</div>
@@ -124,10 +126,9 @@ export default function App() {
               <p className="text-sm text-white/80 mt-1 relative max-w-xl">{hero[2]}</p>
             </div>
           )}
-          {user.role === "patient" ? <PatientPortal tab={active} />
-            : user.role === "caregiver" ? <CaregiverPortal tab={active} />
+          {user.role === "patient" ? <PatientPortal tab={active} notif={notif} />
             : user.role === "admin" ? <AdminPortal />
-            : <ClinicianPortal />}
+            : <ClinicianPortal tab={active} />}
         </main>
       </div>
   );

@@ -72,16 +72,12 @@ export async function runMonitoringTick(patient, opts = {}) {
 
   let alert = null;
   if (result.risk_level !== "low") {
-    const [caregivers, clinicians] = await Promise.all([
-      User.find({ role: "caregiver", linkedPatients: patient._id }, "_id"),
-      User.find({ role: "clinician", linkedPatients: patient._id }, "_id"),
-    ]);
+    const clinicians = await User.find({ role: "clinician", linkedPatients: patient._id }, "_id");
     alert = await Alert.create({
       patient: patient._id,
       prediction: prediction._id,
       alertType: result.prediction_class === "ictal" ? "seizure_detected" : "seizure_warning",
       riskProbability: result.risk_probability,
-      notifiedCaregivers: caregivers.map((c) => c._id),
       notifiedClinicians: clinicians.map((c) => c._id),
     });
   }

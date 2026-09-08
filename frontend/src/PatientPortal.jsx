@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
 import { api, useApi } from "./api";
 import {
-  Alert, Button, Card, CountUp, EEGWaveform, Field, Skeleton, Spinner,
+  Alert, Button, Card, CountUp, DesktopNotifyBanner, EEGWaveform, Field, Skeleton, Spinner,
   TrendChart, RiskBadge, RiskFingerprint, classLabel, fmtDate, inputCls, primaryContributors, riskStyle,
 } from "./ui";
 
-export default function PatientPortal({ tab }) {
+export default function PatientPortal({ tab, notif }) {
   switch (tab) {
     case "dashboard": return <Dashboard />;
     case "live": return <LiveMonitoring />;
     case "predictions": return <Predictions />;
     case "xai": return <ExplainableAI />;
     case "benchmark": return <ModelBenchmark />;
-    case "alerts": return <Alerts />;
+    case "alerts": return <Alerts notif={notif} />;
     case "history": return <History />;
     case "checkin": return <DailyCheckin />;
     case "baseline": return <BaselineInfo />;
@@ -26,6 +26,7 @@ export default function PatientPortal({ tab }) {
 function Dashboard() {
   const { data, loading, error, reload } = useApi("/api/patient/dashboard");
   const checkin = useApi("/api/patient/checkin/today");
+  const baseline = useApi("/api/patient/baseline");
 
   if (loading) return <Card><Skeleton lines={4} /></Card>;
   if (error) return <Alert>{error}</Alert>;
@@ -81,6 +82,25 @@ function Dashboard() {
           </>
         ) : (
           <p className="text-sm text-slate-400">No seizure events logged yet.</p>
+        )}
+      </Card>
+
+      <Card title="Current medications" className="sm:col-span-2">
+        {baseline.loading ? <Skeleton lines={2} /> : !baseline.data?.medications ? (
+          <p className="text-sm text-slate-400">No medications recorded yet — add them in Baseline Info.</p>
+        ) : (
+          <>
+            <p className="text-slate-700 whitespace-pre-wrap">{baseline.data.medications}</p>
+            <p className="text-xs mt-2">
+              {baseline.data.medications_prescribed_by ? (
+                <span className="text-emerald-600 font-medium">
+                  ✓ Prescribed by {baseline.data.medications_prescribed_by} on {fmtDate(baseline.data.medications_prescribed_at)}
+                </span>
+              ) : (
+                <span className="text-slate-400">Self-reported — not yet confirmed by a clinician.</span>
+              )}
+            </p>
+          </>
         )}
       </Card>
 
@@ -215,8 +235,8 @@ function LiveMonitoring() {
 
       {latest?.alert_raised && (
         <Alert kind="error">
-          Elevated risk detected — recorded as an alert, visible to your linked caregivers/clinicians next time they check
-          (this is an in-app record, not a push/email/SMS notification, unless that's separately configured).
+          Elevated risk detected — recorded as an alert, visible to your linked clinicians next time they check, plus
+          an in-app desktop pop-up on this device if enabled (not email/SMS).
         </Alert>
       )}
 
@@ -321,8 +341,8 @@ function DecisionSupportSummary({ prediction, history }) {
 
   const actions = {
     low: ["Continue routine monitoring."],
-    moderate: ["Stay somewhere safe.", "Let a linked caregiver know you're being monitored.", "Continue enhanced monitoring."],
-    high: ["Move to a safe location if possible.", "Alert a linked caregiver/clinician now.", "Follow your seizure action plan."],
+    moderate: ["Stay somewhere safe.", "Let a linked clinician know you're being monitored.", "Continue enhanced monitoring."],
+    high: ["Move to a safe location if possible.", "Alert a linked clinician now.", "Follow your seizure action plan."],
   }[prediction.risk_level] || [];
 
   return (
@@ -599,17 +619,12 @@ function ExplainableAI() {
 
 // ---- Model Benchmark ---------------------------------------------------------------
 // Real numbers only, from models/metadata.json (written by src/train.py after
-// an actual training run) — never invented. Rows for model variants that
-// were never actually trained here (plain CNN, plain BiLSTM, CNN-BiLSTM
-// without the Transformer) are left blank rather than guessed. XGBoost is
-// the deployed explainability surrogate (SHAP runs against it); Gradient
-// Boosting is trained purely as a real comparison baseline, not deployed.
+// an actual training run) — never invented. XGBoost is the deployed
+// explainability surrogate (SHAP runs against it); Gradient Boosting is
+// trained purely as a real comparison baseline, not deployed.
 
 const BENCHMARK_ROWS = [
   { key: "gb_baseline", label: "Gradient Boosting (comparison baseline, not deployed)", metaKey: "baseline" },
-  { key: "cnn", label: "CNN only", metaKey: null },
-  { key: "bilstm", label: "BiLSTM only", metaKey: null },
-  { key: "cnn_bilstm", label: "CNN + BiLSTM (no Transformer)", metaKey: null },
   { key: "xgb_surrogate", label: "XGBoost (explainability surrogate, deployed)", metaKey: "surrogate" },
   { key: "full", label: "CNN + BiLSTM + Transformer (deployed primary model)", metaKey: "deep_model" },
 ];
@@ -633,8 +648,7 @@ function ModelBenchmark() {
       <Card title="AI model benchmark">
         <p className="text-xs text-slate-400 -mt-2 mb-4">
           Real held-out test results from the actual training run ({data.n_train} train / {data.n_test} test epochs,{" "}
-          {data.dataset}). Rows for model variants never actually trained in this project are left blank rather than
-          estimated — this table reflects what has genuinely been run, not a projection.
+          {data.dataset}) — this table reflects what has genuinely been run, not a projection.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -677,21 +691,19 @@ function ModelBenchmark() {
 
 // ---- Emergency Alerts -------------------------------------------------------------
 
-function Alerts() {
+function Alerts({ notif }) {
   const { data, loading, error, reload } = useApi("/api/patient/alerts");
   if (loading) return <Card><Skeleton lines={4} /></Card>;
   if (error) return <Alert>{error}</Alert>;
-  if (!data.length) return <Card><p className="text-sm text-slate-400">No alerts yet — good sign.</p></Card>;
 
   return (
     <Card title={`Alerts (${data.length})`}>
+      <DesktopNotifyBanner notif={notif} />
+      {!data.length && <p className="text-sm text-slate-400">No alerts yet — good sign.</p>}
       <div className="space-y-3">
         {data.map((a) => {
           const contributors = primaryContributors(a.reasons);
-          const visibleTo = [
-            a.notified_caregivers > 0 && `${a.notified_caregivers} caregiver${a.notified_caregivers > 1 ? "s" : ""}`,
-            a.notified_clinicians > 0 && `${a.notified_clinicians} clinician${a.notified_clinicians > 1 ? "s" : ""}`,
-          ].filter(Boolean).join(", ");
+          const visibleTo = a.notified_clinicians > 0 ? `${a.notified_clinicians} clinician${a.notified_clinicians > 1 ? "s" : ""}` : "";
           return (
             <div key={a.id} className={`rounded-xl px-4 py-3 border ${a.acknowledged ? "border-slate-100 bg-slate-50" : "border-red-200 bg-red-50"}`}>
               <div className="flex items-center justify-between gap-3">
@@ -712,8 +724,8 @@ function Alerts() {
               )}
               <p className="text-xs text-slate-400 mt-1">
                 {visibleTo
-                  ? `Recorded — visible in-app to ${visibleTo} (not a push/email/SMS notification unless separately configured)`
-                  : "Recorded — no caregiver or clinician currently linked to see it"}
+                  ? `Recorded — visible in-app to ${visibleTo} (plus a desktop notification on this device if enabled above; not email/SMS)`
+                  : "Recorded — no clinician currently linked to see it"}
               </p>
             </div>
           );
@@ -1276,6 +1288,12 @@ function BaselineInfo() {
           <Field label="Current seizure medications">
             <textarea rows={2} className={inputCls} value={form.medications} onChange={set("medications")} placeholder="e.g. Levetiracetam 500mg twice daily" />
           </Field>
+          {data.medications_prescribed_by && (
+            <p className="text-xs text-emerald-600 font-medium mt-1">
+              ✓ Prescribed by {data.medications_prescribed_by} on {fmtDate(data.medications_prescribed_at)}. Editing this
+              field replaces it with your own self-report.
+            </p>
+          )}
         </div>
         <div className="sm:col-span-2">
           <Field label="Recent medication changes (optional)">
@@ -1308,7 +1326,6 @@ function Profile() {
   const [form, setForm] = useState(null);
   const [saveError, setSaveError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (data && !form) setForm({ full_name: data.full_name, age: data.age ?? "", medical_history: data.medical_history, baseline_heart_rate: data.baseline_heart_rate, baseline_eda: data.baseline_eda });
@@ -1339,26 +1356,12 @@ function Profile() {
     }
   };
 
-  const copyCode = () => {
-    navigator.clipboard?.writeText(data.patient_code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
   const revoke = async (userId) => {
     try { await api(`/api/patient/linked/${userId}`, { method: "DELETE" }); linked.reload(); } catch { /* noop */ }
   };
 
   return (
     <div className="space-y-6">
-      <Card title="Your shareable patient code">
-        <p className="text-sm text-slate-500 mb-3">Give this to a caregiver or clinician so they can link to your account and monitor you remotely.</p>
-        <div className="flex items-center gap-3">
-          <code className="text-lg font-bold tracking-wider bg-blue-50 text-blue-900 px-4 py-2 rounded-lg">{data.patient_code}</code>
-          <Button variant="subtle" type="button" onClick={copyCode}>{copied ? "Copied!" : "Copy"}</Button>
-        </div>
-      </Card>
-
       <Card title="Your details">
         <Alert>{saveError}</Alert>
         <form onSubmit={save} className="grid sm:grid-cols-2 gap-4">
@@ -1390,27 +1393,23 @@ function Profile() {
 
       <Card title="Who's monitoring you">
         {linked.loading ? <Skeleton lines={2} /> : linked.error ? <Alert>{linked.error}</Alert> : (
-          <div className="space-y-4">
-            {["caregivers", "clinicians"].map((group) => (
-              <div key={group}>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2 capitalize">{group}</p>
-                {linked.data[group].length === 0 ? (
-                  <p className="text-sm text-slate-400">None linked yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {linked.data[group].map((u) => (
-                      <div key={u.id} className="flex items-center justify-between text-sm bg-slate-50 rounded-lg px-3 py-2">
-                        <div>
-                          <p className="font-medium text-slate-700">{u.full_name}</p>
-                          <p className="text-xs text-slate-400">{u.email}</p>
-                        </div>
-                        <button onClick={() => revoke(u.id)} className="text-xs font-semibold text-red-500 hover:text-red-700">Revoke</button>
-                      </div>
-                    ))}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">Clinicians</p>
+            {linked.data.clinicians.length === 0 ? (
+              <p className="text-sm text-slate-400">None linked yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {linked.data.clinicians.map((u) => (
+                  <div key={u.id} className="flex items-center justify-between text-sm bg-slate-50 rounded-lg px-3 py-2">
+                    <div>
+                      <p className="font-medium text-slate-700">{u.full_name}</p>
+                      <p className="text-xs text-slate-400">{u.email}</p>
+                    </div>
+                    <button onClick={() => revoke(u.id)} className="text-xs font-semibold text-red-500 hover:text-red-700">Revoke</button>
                   </div>
-                )}
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
       </Card>

@@ -2,12 +2,12 @@ import mongoose from "mongoose";
 
 const { Schema } = mongoose;
 
-// ---- Patient Table (+ role for Caregiver/Clinician accounts) ----------------
+// ---- Patient Table (+ role for Clinician/Admin accounts) ----------------
 const userSchema = new Schema({
   email: { type: String, required: true, unique: true, lowercase: true, index: true },
   passwordHash: { type: String, required: true },
   fullName: { type: String, required: true },
-  role: { type: String, enum: ["patient", "caregiver", "clinician", "admin"], default: "patient" },
+  role: { type: String, enum: ["patient", "clinician", "admin"], default: "patient" },
   isBlocked: { type: Boolean, default: false },
   // Clinician accounts require admin sign-off before they can log in; every
   // other role is auto-approved. "admin" is never self-registered (see
@@ -15,7 +15,6 @@ const userSchema = new Schema({
   approvalStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "approved" },
 
   // Patient-only fields
-  patientCode: { type: String, unique: true, sparse: true, index: true }, // shareable link code
   age: Number,
   medicalHistory: { type: String, default: "" },
   baselineHeartRate: { type: Number, default: 72 },
@@ -34,11 +33,19 @@ const userSchema = new Schema({
   hasAura: { type: String, enum: ["", "yes", "no", "sometimes"], default: "" },
   auraSymptoms: { type: String, default: "" },
   medications: { type: String, default: "" },
+  // Set whenever a clinician applies a plan via the AI Medication Assistant
+  // (see routes/clinician.js) — cleared if the patient later edits
+  // `medications` themselves, so it never misrepresents a self-report as a
+  // clinician's prescription. Denormalized (name, not a User ref) since it's
+  // display-only provenance, not a relationship the app needs to traverse.
+  medicationsPrescribedByName: { type: String, default: "" },
+  medicationsPrescribedAt: { type: Date, default: null },
   recentMedicationChanges: { type: String, default: "" },
   otherConditions: { type: String, default: "" },
   knownTriggers: { type: String, default: "" },
 
-  // Caregiver/Clinician: patients they've linked to (by consent via patientCode)
+  // Clinician: patients they've linked to, selected by name from the
+  // clinician-facing patient directory (see GET /api/clinician/directory).
   linkedPatients: [{ type: Schema.Types.ObjectId, ref: "User" }],
 
   createdAt: { type: Date, default: Date.now },
@@ -87,8 +94,8 @@ const predictionSchema = new Schema({
 // falls, movement, tongue biting, incontinence, witness, EMS) are a
 // structured post-seizure report — real clinical documentation value for
 // the patient's own record and for clinicians reviewing the case, filled in
-// after the fact by the patient/caregiver. None of it is required; a
-// seizure can still be logged with just a date and duration as before.
+// after the fact by the patient. None of it is required; a seizure can
+// still be logged with just a date and duration as before.
 const seizureEventSchema = new Schema({
   patient: { type: Schema.Types.ObjectId, ref: "User", index: true, required: true },
   date: { type: Date, default: Date.now },
@@ -117,7 +124,6 @@ const alertSchema = new Schema({
   prediction: { type: Schema.Types.ObjectId, ref: "Prediction" },
   alertType: { type: String, enum: ["seizure_warning", "seizure_detected"], required: true },
   riskProbability: Number,
-  notifiedCaregivers: [{ type: Schema.Types.ObjectId, ref: "User" }],
   notifiedClinicians: [{ type: Schema.Types.ObjectId, ref: "User" }],
   acknowledged: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
@@ -204,8 +210,4 @@ export async function logActivity(user, action, detail = "") {
       user: user?._id, userEmail: user?.email, action, detail,
     });
   } catch { /* logging must never break the request */ }
-}
-
-export function genPatientCode() {
-  return "PT-" + Math.random().toString(36).slice(2, 8).toUpperCase();
 }

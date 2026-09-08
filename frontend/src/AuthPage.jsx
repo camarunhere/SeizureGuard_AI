@@ -5,7 +5,6 @@ import Background, { BG_TINTS } from "./Background";
 
 const ROLES = [
   { key: "patient", icon: "🧑‍🦽", label: "Patient", features: ["Personal monitoring", "Risk prediction", "Health history"] },
-  { key: "caregiver", icon: "🤝", label: "Caregiver", features: ["Patient monitoring", "Emergency alerts", "Notifications"] },
   { key: "clinician", icon: "🩺", label: "Clinician", features: ["Multiple patient dashboard", "Clinical analytics", "AI reports"], requiresApproval: true },
   { key: "admin", icon: "🛡️", label: "Admin", features: ["Approve clinician accounts"], loginOnly: true },
 ];

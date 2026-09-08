@@ -1,26 +1,63 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import { requireRole } from "../auth.js";
 import { Alert, Prediction, SeizureEvent, SensorReading, User, logActivity } from "../models.js";
 import { predictionPayload, readingPayload } from "../services.js";
+import { buildConditionSummary, generateMedicationSuggestions } from "../aiMedication.js";
 
 const router = Router();
 const clinicianOnly = requireRole("clinician");
 
-async function loadLinkedPatient(req, res, next) {
-  const patient = await User.findOne({ _id: req.params.patientId, role: "patient" });
-  if (!patient) return res.status(404).json({ detail: "Patient not found." });
-  if (!req.user.linkedPatients.some((id) => String(id) === String(patient._id)))
-    return res.status(403).json({ detail: "You are not linked to this patient." });
-  req.patient = patient;
-  next();
+// A short, human-readable identity label derived from the patient's own
+// Mongo ID — purely so a clinician can visually tell apart two patients who
+// happen to share a name. It's display-only: never accepted as input, never
+// used to search/select/link a patient (that's name-based — see /directory
+// and /link below). Deterministic and always unique since it's sliced from
+// an already-unique ObjectId, so there's no separate field to store or keep
+// in sync.
+function shortCode(id) {
+  return String(id).slice(-6).toUpperCase();
 }
 
-// ---- Link to a patient using their shareable Patient Code ----------------------
+// The frontend always supplies a real patient ID here (selected by name from
+// a dropdown/directory — see GET /directory and POST /link below), never
+// hand-typed, but never trust that blindly: an invalid ObjectId cast throws
+// synchronously inside the query and, uncaught, takes down the whole Node
+// process (see the unhandledRejection note in index.js) — every other
+// user's in-flight request with it.
+async function loadLinkedPatient(req, res, next) {
+  const raw = String(req.params.patientId || "").trim();
+  if (!mongoose.isValidObjectId(raw)) return res.status(400).json({ detail: "Invalid patient ID." });
+  try {
+    const patient = await User.findOne({ _id: raw, role: "patient" });
+    if (!patient) return res.status(404).json({ detail: "Patient not found." });
+    if (!req.user.linkedPatients.some((id) => String(id) === String(patient._id)))
+      return res.status(403).json({ detail: "You are not linked to this patient." });
+    req.patient = patient;
+    next();
+  } catch (err) {
+    console.error("[clinician] loadLinkedPatient failed:", err.message);
+    res.status(400).json({ detail: "Invalid patient ID." });
+  }
+}
+
+// ---- Link to a patient, selected by name from the patient directory ------------
+
+// All registered patients not already linked to this clinician — lets the
+// clinician search/select someone by name instead of needing a shared code.
+router.get("/directory", clinicianOnly, async (req, res) => {
+  const patients = await User.find(
+    { role: "patient", _id: { $nin: req.user.linkedPatients } },
+    "fullName age"
+  ).sort({ fullName: 1 });
+  res.json(patients.map((p) => ({ id: String(p._id), full_name: p.fullName, age: p.age ?? null, code: shortCode(p._id) })));
+});
 
 router.post("/link", clinicianOnly, async (req, res) => {
-  const code = String(req.body?.patient_code || "").trim().toUpperCase();
-  const patient = await User.findOne({ patientCode: code, role: "patient" });
-  if (!patient) return res.status(404).json({ detail: "No patient found with that code." });
+  const patientId = String(req.body?.patient_id || "").trim();
+  if (!mongoose.isValidObjectId(patientId)) return res.status(422).json({ detail: "A valid patient must be selected." });
+  const patient = await User.findOne({ _id: patientId, role: "patient" });
+  if (!patient) return res.status(404).json({ detail: "Patient not found." });
 
   if (!req.user.linkedPatients.some((id) => String(id) === String(patient._id))) {
     req.user.linkedPatients.push(patient._id);
@@ -49,6 +86,7 @@ router.get("/patients", clinicianOnly, async (req, res) => {
     out.push({
       id: String(p._id),
       full_name: p.fullName,
+      code: shortCode(p._id),
       age: p.age,
       current_risk_level: latest?.riskLevel || "unknown",
       ai_confidence: latest ? Math.round(Math.max(latest.riskProbability, 1 - latest.riskProbability) * 100) : null,
@@ -69,8 +107,11 @@ router.get("/patients/:patientId", clinicianOnly, loadLinkedPatient, async (req,
   ]);
   res.json({
     patient: {
-      id: String(req.patient._id), full_name: req.patient.fullName, age: req.patient.age,
-      medical_history: req.patient.medicalHistory, patient_code: req.patient.patientCode,
+      id: String(req.patient._id), full_name: req.patient.fullName, code: shortCode(req.patient._id), age: req.patient.age,
+      medical_history: req.patient.medicalHistory,
+      medications: req.patient.medications || "",
+      medications_prescribed_by: req.patient.medicationsPrescribedByName || null,
+      medications_prescribed_at: req.patient.medicationsPrescribedAt ? req.patient.medicationsPrescribedAt.toISOString() : null,
     },
     predictions: predictions.map(predictionPayload),
     latest_vitals: reading ? readingPayload(reading) : null,
@@ -110,7 +151,7 @@ router.get("/patients/:patientId/report/:predictionId", clinicianOnly, loadLinke
   if (prediction.predictionClass === "ictal")
     suggestions.push("Seizure activity detected in the current epoch — follow the patient's emergency seizure protocol immediately.");
   else if (prediction.predictionClass === "pre_ictal")
-    suggestions.push(`Elevated seizure risk with an estimated window of ${prediction.seizureWindow || "the near term"} — consider proactive rescue medication per care plan and notify caregivers.`);
+    suggestions.push(`Elevated seizure risk with an estimated window of ${prediction.seizureWindow || "the near term"} — consider proactive rescue medication per care plan.`);
   else
     suggestions.push("No elevated seizure risk detected in this reading — continue routine monitoring.");
   if (topReasons.some((r) => r.source === "vitals" && /heart rate/i.test(r.factor)))
@@ -134,6 +175,51 @@ router.get("/patients/:patientId/report/:predictionId", clinicianOnly, loadLinke
     xai_explanation: topReasons,
     suggested_clinical_action: suggestions,
   });
+});
+
+// ---- AI Medication Assistant ----------------------------------------------------
+// Given a patient's ID (must already be linked to this clinician, same
+// consent model as every other clinician route here), an LLM drafts
+// anti-epileptic medication considerations from the patient's condition.
+// This is always a draft: nothing is written to the patient's record until
+// the clinician explicitly applies it via the /medications route below.
+
+router.post("/patients/:patientId/medication-suggestions", clinicianOnly, loadLinkedPatient, async (req, res) => {
+  const [events, latestPrediction] = await Promise.all([
+    SeizureEvent.find({ patient: req.patient._id }).sort({ date: -1 }).limit(10),
+    Prediction.findOne({ patient: req.patient._id }).sort({ predictionTime: -1 }),
+  ]);
+  const conditionSummary = buildConditionSummary(req.patient, events, latestPrediction);
+
+  try {
+    const result = await generateMedicationSuggestions(conditionSummary, req.patient);
+    await logActivity(req.user, "generate_medication_suggestions", String(req.patient._id));
+    res.json({
+      patient_id: String(req.patient._id),
+      patient_name: req.patient.fullName,
+      condition_summary: conditionSummary,
+      ...result,
+    });
+  } catch (err) {
+    res.status(err.status || 502).json({ detail: err.message });
+  }
+});
+
+// Explicit clinician action to record a reviewed medication plan on the
+// patient's chart — separate from the AI draft above on purpose, so nothing
+// AI-generated ever reaches the patient record without a human step.
+router.post("/patients/:patientId/medications", clinicianOnly, loadLinkedPatient, async (req, res) => {
+  const medications = String(req.body?.medications || "").trim();
+  if (!medications) return res.status(422).json({ detail: "Medications text is required." });
+
+  req.patient.recentMedicationChanges =
+    `Updated by Dr. ${req.user.fullName} on ${new Date().toISOString().slice(0, 10)} (via AI Medication Assistant, clinician-reviewed): ${medications}`;
+  req.patient.medications = medications;
+  req.patient.medicationsPrescribedByName = req.user.fullName;
+  req.patient.medicationsPrescribedAt = new Date();
+  await req.patient.save();
+  await logActivity(req.user, "update_patient_medications", String(req.patient._id));
+  res.json({ message: "Medications updated on the patient's record." });
 });
 
 export default router;

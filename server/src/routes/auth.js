@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { Router } from "express";
 import { createToken, requireAuth } from "../auth.js";
-import { User, genPatientCode, logActivity } from "../models.js";
+import { User, logActivity } from "../models.js";
 
 const router = Router();
 
@@ -12,7 +12,6 @@ function userPayload(u) {
     full_name: u.fullName,
     role: u.role,
     approval_status: u.approvalStatus,
-    patient_code: u.patientCode || null,
     age: u.age ?? null,
     medical_history: u.medicalHistory || "",
     linked_patients_count: u.linkedPatients?.length || 0,
@@ -28,8 +27,8 @@ router.post("/register", async (req, res) => {
   if (!password || String(password).length < 6)
     return res.status(422).json({ detail: "Password must be at least 6 characters." });
   // "admin" is deliberately excluded — never self-registerable via the public form.
-  if (!["patient", "caregiver", "clinician"].includes(role))
-    return res.status(422).json({ detail: "Role must be patient, caregiver or clinician." });
+  if (!["patient", "clinician"].includes(role))
+    return res.status(422).json({ detail: "Role must be patient or clinician." });
 
   const existing = await User.findOne({ email: String(email).toLowerCase() });
   if (existing) return res.status(409).json({ detail: "An account with this email already exists." });
@@ -42,7 +41,6 @@ router.post("/register", async (req, res) => {
     role,
   };
   if (role === "patient") {
-    doc.patientCode = genPatientCode();
     doc.age = age || null;
     doc.medicalHistory = medical_history || "";
   }

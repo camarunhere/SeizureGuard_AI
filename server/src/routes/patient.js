@@ -28,7 +28,6 @@ router.get("/profile", patientOnly, (req, res) => {
   res.json({
     full_name: u.fullName,
     email: u.email,
-    patient_code: u.patientCode,
     age: u.age ?? null,
     medical_history: u.medicalHistory || "",
     baseline_heart_rate: u.baselineHeartRate,
@@ -64,6 +63,8 @@ router.get("/baseline", patientOnly, (req, res) => {
     has_aura: u.hasAura || "",
     aura_symptoms: u.auraSymptoms || "",
     medications: u.medications || "",
+    medications_prescribed_by: u.medicationsPrescribedByName || null,
+    medications_prescribed_at: u.medicationsPrescribedAt ? u.medicationsPrescribedAt.toISOString() : null,
     recent_medication_changes: u.recentMedicationChanges || "",
     other_conditions: u.otherConditions || "",
     known_triggers: u.knownTriggers || "",
@@ -78,6 +79,13 @@ router.put("/baseline", patientOnly, async (req, res) => {
     recent_medication_changes: "recentMedicationChanges", other_conditions: "otherConditions",
     known_triggers: "knownTriggers",
   };
+  // A patient editing their medications themselves supersedes whatever a
+  // clinician last prescribed — clear the attribution so it's never shown
+  // as the clinician's plan once it no longer is.
+  if (b.medications != null && b.medications !== req.user.medications) {
+    req.user.medicationsPrescribedByName = "";
+    req.user.medicationsPrescribedAt = null;
+  }
   for (const [key, prop] of Object.entries(fields)) {
     if (b[key] != null) req.user[prop] = b[key];
   }
@@ -204,15 +212,11 @@ router.get("/checkin/history", patientOnly, async (req, res) => {
   res.json(checkins.map((c) => checkinPayload(c)));
 });
 
-// ---- Who's monitoring me (caregivers/clinicians linked via my patient code) ----
+// ---- Who's monitoring me (clinicians linked via my patient code) ----
 
 router.get("/linked", patientOnly, async (req, res) => {
-  const [caregivers, clinicians] = await Promise.all([
-    User.find({ role: "caregiver", linkedPatients: req.user._id }, "fullName email"),
-    User.find({ role: "clinician", linkedPatients: req.user._id }, "fullName email"),
-  ]);
+  const clinicians = await User.find({ role: "clinician", linkedPatients: req.user._id }, "fullName email");
   res.json({
-    caregivers: caregivers.map((c) => ({ id: String(c._id), full_name: c.fullName, email: c.email })),
     clinicians: clinicians.map((c) => ({ id: String(c._id), full_name: c.fullName, email: c.email })),
   });
 });
@@ -331,9 +335,8 @@ router.get("/alerts", patientOnly, async (req, res) => {
     created_at: a.createdAt.toISOString(),
     prediction_class: a.prediction?.predictionClass || null,
     reasons: a.prediction?.reasons || [],
-    // Real counts of who this alert is visible to (in-app), not a delivery
+    // Real count of who this alert is visible to (in-app), not a delivery
     // guarantee — no push/email/SMS is actually sent by this system.
-    notified_caregivers: a.notifiedCaregivers.length,
     notified_clinicians: a.notifiedClinicians.length,
   })));
 });

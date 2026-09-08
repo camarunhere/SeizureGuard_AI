@@ -12,7 +12,6 @@ import { useEffect, useRef } from "react";
  *   network   — a sparse neural network graph (AI prediction / XAI)
  *   alert     — a slow breathing red pulse (emergency alert page)
  *   timeline  — a single calm trend line (history & analytics)
- *   link      — two nodes connected by a soft pulsing line (caregiver — "watching over")
  *   clinical  — a quiet multi-node grid (clinician — many patients)
  *   insight   — slow-rotating amber light rays from a soft glow (explainable AI — "shedding light")
  *   profile   — calm concentric rings around a center point (profile — personal, settled)
@@ -159,24 +158,6 @@ export default function Background({ variant }) {
         }
       }
 
-      if (variant === "link") {
-        const p1 = { x: W * 0.25, y: H * 0.35 };
-        const p2 = { x: W * 0.72, y: H * 0.6 };
-        const pulse = 0.5 + 0.5 * Math.sin(t * 0.0009);
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.strokeStyle = `rgba(13,148,136,${0.1 + pulse * 0.08})`;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        for (const p of [p1, p2]) {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 5 + pulse * 2, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(13,148,136,0.18)";
-          ctx.fill();
-        }
-      }
-
       if (variant === "insight") {
         const cx = W * 0.8, cy = H * 0.2;
         ctx.save();
@@ -269,7 +250,6 @@ export const BG_TINTS = {
   network: "bg-gradient-to-br from-blue-50 via-slate-50 to-indigo-50",
   alert: "bg-gradient-to-br from-red-50 via-slate-50 to-orange-50",
   timeline: "bg-gradient-to-b from-teal-50 via-slate-50 to-blue-50",
-  link: "bg-gradient-to-br from-teal-50 via-slate-50 to-emerald-50",
   clinical: "bg-gradient-to-br from-indigo-50 via-slate-50 to-blue-50",
   insight: "bg-gradient-to-br from-amber-50 via-slate-50 to-orange-50",
   profile: "bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100",

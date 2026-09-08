@@ -1,5 +1,59 @@
 import { useEffect, useState } from "react";
 
+// In-app pop-up alerts always run while this app is open — no permission
+// needed (see AlertToastHost below). Native OS desktop banners are an
+// optional bonus on top, and depend on OS-level settings this code can't
+// see or override (macOS System Settings > Notifications > your browser,
+// Focus/Do Not Disturb) — if "Send a test notification" shows the in-app
+// toast but never a native banner, that's the OS/browser blocking it.
+export function DesktopNotifyBanner({ notif }) {
+  if (!notif) return null;
+  return (
+    <div className="mb-3 space-y-1.5">
+      <p className="text-xs text-emerald-600 font-medium flex items-center gap-2 flex-wrap">
+        🔔 In-app pop-up alerts are always on for new alerts.
+        <button onClick={notif.sendTestNotification} className="text-blue-700 underline decoration-dotted hover:text-blue-900">
+          Send a test notification
+        </button>
+      </p>
+      {notif.supported && notif.permission === "granted" && (
+        <p className="text-xs text-slate-400">Native OS notifications are also enabled — if the test above didn't also show a system banner, check your OS notification settings for this browser.</p>
+      )}
+      {notif.supported && notif.permission === "denied" && (
+        <p className="text-xs text-slate-400">Native OS banners are blocked in your browser's site settings (in-app pop-ups above still work regardless).</p>
+      )}
+      {notif.supported && notif.permission === "default" && (
+        <button
+          onClick={notif.requestPermission}
+          className="text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg px-3 py-2 transition"
+        >
+          Also enable native OS notification banners
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Fixed top-right toast stack for in-app pop-up alerts — see notif.toasts /
+// notif.dismissToast in notifications.js. Mount once near the app root so
+// it's visible no matter which tab/page is currently open.
+export function AlertToastHost({ notif }) {
+  if (!notif || !notif.toasts?.length) return null;
+  return (
+    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[calc(100vw-2rem)]">
+      {notif.toasts.map((t) => (
+        <div key={t.id} className="bg-white border border-red-200 shadow-xl shadow-slate-900/20 rounded-xl px-4 py-3 animate-fade-in-up">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-sm font-semibold text-slate-800">{t.title}</p>
+            <button onClick={() => notif.dismissToast(t.id)} className="text-slate-400 hover:text-slate-600 text-xs leading-none">✕</button>
+          </div>
+          <p className="text-xs text-slate-500 mt-1">{t.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Card({ title, children, className = "" }) {
   return (
     <div className={`bg-white/85 backdrop-blur-md border border-white/70 rounded-2xl shadow-lg shadow-slate-900/[0.06] p-6 transition-shadow hover:shadow-xl ${className}`}>
