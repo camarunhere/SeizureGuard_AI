@@ -5,7 +5,7 @@ import AuthPage from "./AuthPage";
 import PatientPortal from "./PatientPortal";
 import ClinicianPortal from "./ClinicianPortal";
 import AdminPortal from "./AdminPortal";
-import Background, { BG_TINTS } from "./Background";
+import Background, { BG_TINT } from "./Background";
 import { AlertToastHost } from "./ui";
 import { useDesktopAlertNotifications } from "./notifications";
 
@@ -55,12 +55,6 @@ const PAGE_HERO = {
   },
 };
 
-const PAGE_BG = {
-  patient: { dashboard: "brain", checkin: "profile", live: "livewave", predictions: "network", xai: "insight", benchmark: "network", alerts: "alert", history: "timeline", baseline: "profile", profile: "profile" },
-  clinician: { patients: "clinical", medications: "insight" },
-  admin: { clinicians: "clinical" },
-};
-
 export default function App() {
   const [view, setView] = useState(() => (getToken() ? "app" : "landing")); // landing | auth | app
   const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null));
@@ -85,12 +79,11 @@ export default function App() {
     setView("landing");
   };
 
-  const bgVariant = PAGE_BG[user.role]?.[active] || "brain";
   const hero = PAGE_HERO[user.role]?.[active];
 
   return (
-      <div className={`min-h-screen ${BG_TINTS[bgVariant] || "bg-slate-100"}`}>
-        <Background variant={bgVariant} />
+      <div className={`min-h-screen ${BG_TINT}`}>
+        <Background />
         <AlertToastHost notif={notif} />
         <header className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 border-b border-white/10 sticky top-0 z-20 shadow-lg shadow-slate-900/20">
           <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-4">

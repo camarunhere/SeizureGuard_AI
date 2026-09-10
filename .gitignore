@@ -6,3 +6,4 @@ data/mongo/
 server/.env
 __pycache__/
 *.pyc
+.DS_Store

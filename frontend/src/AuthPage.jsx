@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, storeSession } from "./api";
 import { Alert, Button, Field, Spinner, inputCls } from "./ui";
-import Background, { BG_TINTS } from "./Background";
+import Background, { BG_TINT } from "./Background";
 
 const ROLES = [
   { key: "patient", icon: "🧑‍🦽", label: "Patient", features: ["Personal monitoring", "Risk prediction", "Health history"] },
@@ -56,14 +56,14 @@ export default function AuthPage({ onLogin, onBack }) {
   };
 
   return (
-    <div className={`min-h-screen ${BG_TINTS.eeg} flex items-center justify-center px-4 py-10`}>
-      <Background variant="eeg" />
+    <div className={`min-h-screen ${BG_TINT} flex items-center justify-center px-4 py-10`}>
+      <Background />
       <div className="relative z-10 w-full max-w-md">
         <div className="text-center mb-6">
-          <button onClick={onBack} className="text-xs text-slate-500 hover:text-blue-900 mb-3">← Back to home</button>
+          <button onClick={onBack} className="text-xs text-slate-400 hover:text-white mb-3">← Back to home</button>
           <div className="text-4xl mb-2">🧠</div>
-          <h1 className="text-2xl font-bold text-blue-950">SeizureGuard AI</h1>
-          <p className="text-sm text-slate-500 mt-1">Select your user type</p>
+          <h1 className="text-2xl font-bold text-white">SeizureGuard AI</h1>
+          <p className="text-sm text-slate-400 mt-1">Select your user type</p>
         </div>
 
         <div className="grid grid-cols-4 gap-2 mb-4">

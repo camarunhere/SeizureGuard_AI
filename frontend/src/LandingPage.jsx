@@ -1,4 +1,4 @@
-import Background, { BG_TINTS } from "./Background";
+import Background, { BG_TINT } from "./Background";
 
 const FEATURES = [
   { icon: "🧠", title: "AI-Based Seizure Prediction", text: "A CNN + BiLSTM + Transformer deep learning model trained on real EEG recordings predicts seizure risk before it happens." },
@@ -11,8 +11,8 @@ const FEATURES = [
 
 export default function LandingPage({ onGetStarted }) {
   return (
-    <div className={`min-h-screen ${BG_TINTS["eeg-hero"]}`}>
-      <Background variant="eeg-hero" />
+    <div className={`min-h-screen ${BG_TINT}`}>
+      <Background />
 
       <header className="relative z-10 border-b border-white/40 bg-white/60 backdrop-blur-md sticky top-0">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-8">
@@ -34,10 +34,10 @@ export default function LandingPage({ onGetStarted }) {
 
       <main className="relative z-10">
         <section id="home" className="max-w-4xl mx-auto px-4 pt-20 pb-16 text-center">
-          <h1 className="text-4xl sm:text-5xl font-bold text-blue-950 tracking-tight leading-tight">
+          <h1 className="text-4xl sm:text-5xl font-bold text-white tracking-tight leading-tight">
             AI-Powered Early Seizure Prediction<br />and Clinical Decision Support
           </h1>
-          <p className="text-lg text-slate-600 mt-5 max-w-2xl mx-auto">
+          <p className="text-lg text-slate-300 mt-5 max-w-2xl mx-auto">
             Combining wearable sensors, deep learning, and Explainable AI to improve epilepsy management —
             for patients and clinicians.
           </p>
@@ -63,7 +63,7 @@ export default function LandingPage({ onGetStarted }) {
         </section>
 
         <section id="features" className="max-w-5xl mx-auto px-4 py-10">
-          <h2 className="text-center text-2xl font-bold text-blue-950 mb-8">What the Platform Does</h2>
+          <h2 className="text-center text-2xl font-bold text-white mb-8">What the Platform Does</h2>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f) => (
               <div key={f.title} className="bg-white/75 backdrop-blur-md border border-white/60 rounded-2xl shadow-md p-6 hover:shadow-lg transition">
