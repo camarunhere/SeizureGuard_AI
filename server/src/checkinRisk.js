@@ -69,8 +69,10 @@ export function checkinRiskFactors(checkin) {
   } else if (checkin.medicationTaken === "partially") {
     reasons.push(factor("Seizure medication only partially taken today", 0.6));
   }
-  if (checkin.medicationLate) {
+  if (checkin.medicationIssue === "late") {
     reasons.push(factor("A dose was taken later than usual", 0.35));
+  } else if (checkin.medicationIssue === "partial") {
+    reasons.push(factor("Only part of a dose was taken rather than the full prescribed amount", 0.5));
   }
 
   if (checkin.stressLevel != null && checkin.stressLevel >= 7) {
@@ -83,8 +85,13 @@ export function checkinRiskFactors(checkin) {
     reasons.push(factor(`Unusually tired today (${checkin.fatigueLevel}/10)`, checkin.fatigueLevel / 10));
   }
 
-  if (checkin.illness && checkin.illness !== "none") {
-    reasons.push(factor(`Feeling unwell today (${checkin.illness}) — illness/fever can lower seizure threshold`, checkin.illness === "fever" ? 0.6 : 0.45));
+  if (checkin.illness) {
+    reasons.push(factor(
+      checkin.illnessNote
+        ? `Feeling unwell today (${checkin.illnessNote}) — illness can lower seizure threshold`
+        : "Feeling unwell today — illness can lower seizure threshold",
+      0.5,
+    ));
   }
   if (checkin.ateNormally === false) {
     reasons.push(factor("Did not eat normally today", 0.25));

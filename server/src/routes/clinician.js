@@ -109,9 +109,15 @@ router.get("/patients/:patientId", clinicianOnly, loadLinkedPatient, async (req,
     patient: {
       id: String(req.patient._id), full_name: req.patient.fullName, code: shortCode(req.patient._id), age: req.patient.age,
       medical_history: req.patient.medicalHistory,
+      family_history: req.patient.familyHistory || "",
+      medication_history: req.patient.medicationHistory || "",
       medications: req.patient.medications || "",
       medications_prescribed_by: req.patient.medicationsPrescribedByName || null,
       medications_prescribed_at: req.patient.medicationsPrescribedAt ? req.patient.medicationsPrescribedAt.toISOString() : null,
+      diet_plan: req.patient.dietPlan || "",
+      exercise_plan: req.patient.exercisePlan || "",
+      lifestyle_prescribed_by: req.patient.lifestylePrescribedByName || null,
+      lifestyle_prescribed_at: req.patient.lifestylePrescribedAt ? req.patient.lifestylePrescribedAt.toISOString() : null,
     },
     predictions: predictions.map(predictionPayload),
     latest_vitals: reading ? readingPayload(reading) : null,
@@ -220,6 +226,24 @@ router.post("/patients/:patientId/medications", clinicianOnly, loadLinkedPatient
   await req.patient.save();
   await logActivity(req.user, "update_patient_medications", String(req.patient._id));
   res.json({ message: "Medications updated on the patient's record." });
+});
+
+// ---- Lifestyle Modification -------------------------------------------------------
+// Clinician-authored diet and exercise recommendations, applied directly to
+// the patient's Baseline Info (not AI-generated) — a doctor prescribing food/
+// diet guidance and physical activity, same provenance pattern as medications.
+router.post("/patients/:patientId/lifestyle", clinicianOnly, loadLinkedPatient, async (req, res) => {
+  const dietPlan = String(req.body?.diet_plan || "").trim();
+  const exercisePlan = String(req.body?.exercise_plan || "").trim();
+  if (!dietPlan && !exercisePlan) return res.status(422).json({ detail: "At least a diet or exercise recommendation is required." });
+
+  req.patient.dietPlan = dietPlan;
+  req.patient.exercisePlan = exercisePlan;
+  req.patient.lifestylePrescribedByName = req.user.fullName;
+  req.patient.lifestylePrescribedAt = new Date();
+  await req.patient.save();
+  await logActivity(req.user, "update_patient_lifestyle", String(req.patient._id));
+  res.json({ message: "Lifestyle modification plan updated on the patient's record." });
 });
 
 export default router;

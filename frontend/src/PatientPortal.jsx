@@ -5,7 +5,7 @@ import {
   TrendChart, RiskBadge, RiskFingerprint, classLabel, fmtDate, inputCls, primaryContributors, riskStyle,
 } from "./ui";
 
-export default function PatientPortal({ tab, notif }) {
+export default function PatientPortal({ tab, notif, onNavigate }) {
   switch (tab) {
     case "dashboard": return <Dashboard />;
     case "live": return <LiveMonitoring />;
@@ -14,7 +14,7 @@ export default function PatientPortal({ tab, notif }) {
     case "benchmark": return <ModelBenchmark />;
     case "alerts": return <Alerts notif={notif} />;
     case "history": return <History />;
-    case "checkin": return <DailyCheckin />;
+    case "checkin": return <DailyCheckin onNavigate={onNavigate} />;
     case "baseline": return <BaselineInfo />;
     case "profile": return <Profile />;
     default: return null;
@@ -918,9 +918,9 @@ const EMPTY_CHECKIN = {
   warning_symptoms: [], warning_symptoms_other: "",
   compared_to_usual: "",
   sleep_hours: "", sleep_quality: "", woke_frequently: "",
-  medication_taken: "", medication_late: "",
+  medication_taken: "", medication_issue: "",
   stress_level: "", anxiety_level: "", fatigue_level: "",
-  illness: "none", ate_normally: "", hydrated: "", strenuous_exercise: "",
+  illness: "", illness_note: "", ate_normally: "", hydrated: "", strenuous_exercise: "",
   alcohol: "", caffeine_more_than_usual: "", recreational_drugs: "",
   known_trigger_experienced: "", trigger_note: "",
 };
@@ -966,12 +966,13 @@ function ScaleField({ label, value, onChange }) {
   );
 }
 
-function DailyCheckin() {
+function DailyCheckin({ onNavigate }) {
   const { data, loading, error: loadError, reload } = useApi("/api/patient/checkin/today");
   const [form, setForm] = useState(null);
   const [saveError, setSaveError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
     if (!loading && !form) {
@@ -979,9 +980,9 @@ function DailyCheckin() {
         warning_symptoms: data.warning_symptoms || [], warning_symptoms_other: data.warning_symptoms_other || "",
         compared_to_usual: data.compared_to_usual || "",
         sleep_hours: data.sleep_hours ?? "", sleep_quality: data.sleep_quality || "", woke_frequently: boolToStr(data.woke_frequently),
-        medication_taken: data.medication_taken || "", medication_late: boolToStr(data.medication_late),
+        medication_taken: data.medication_taken || "", medication_issue: data.medication_issue || "",
         stress_level: data.stress_level ?? "", anxiety_level: data.anxiety_level ?? "", fatigue_level: data.fatigue_level ?? "",
-        illness: data.illness || "none", ate_normally: boolToStr(data.ate_normally), hydrated: boolToStr(data.hydrated),
+        illness: boolToStr(data.illness), illness_note: data.illness_note || "", ate_normally: boolToStr(data.ate_normally), hydrated: boolToStr(data.hydrated),
         strenuous_exercise: boolToStr(data.strenuous_exercise), alcohol: boolToStr(data.alcohol),
         caffeine_more_than_usual: boolToStr(data.caffeine_more_than_usual), recreational_drugs: boolToStr(data.recreational_drugs),
         known_trigger_experienced: boolToStr(data.known_trigger_experienced), trigger_note: data.trigger_note || "",
@@ -1002,7 +1003,7 @@ function DailyCheckin() {
     setSaved(false);
     setBusy(true);
     try {
-      await api("/api/patient/checkin", {
+      const res = await api("/api/patient/checkin", {
         method: "POST",
         body: {
           warning_symptoms: form.warning_symptoms,
@@ -1012,11 +1013,12 @@ function DailyCheckin() {
           sleep_quality: form.sleep_quality || undefined,
           woke_frequently: strToBool(form.woke_frequently),
           medication_taken: form.medication_taken || undefined,
-          medication_late: strToBool(form.medication_late),
+          medication_issue: form.medication_issue || undefined,
           stress_level: form.stress_level === "" ? undefined : Number(form.stress_level),
           anxiety_level: form.anxiety_level === "" ? undefined : Number(form.anxiety_level),
           fatigue_level: form.fatigue_level === "" ? undefined : Number(form.fatigue_level),
-          illness: form.illness,
+          illness: strToBool(form.illness),
+          illness_note: form.illness === "yes" ? form.illness_note : undefined,
           ate_normally: strToBool(form.ate_normally),
           hydrated: strToBool(form.hydrated),
           strenuous_exercise: strToBool(form.strenuous_exercise),
@@ -1029,6 +1031,10 @@ function DailyCheckin() {
       });
       setSaved(true);
       reload();
+      if (res.risk_level?.level === "elevated" && onNavigate) {
+        setRedirecting(true);
+        setTimeout(() => onNavigate("history"), 1500);
+      }
     } catch (err) {
       setSaveError(err.message);
     } finally {
@@ -1049,6 +1055,9 @@ function DailyCheckin() {
       <Card title={`Today's check-in${data ? " (already submitted — editing will update it)" : ""}`}>
         <Alert>{saveError}</Alert>
         <Alert kind="success">{saved ? "Check-in saved." : ""}</Alert>
+        {redirecting && (
+          <Alert kind="error">🔴 Elevated risk detected from today's check-in — taking you to History &amp; Analytics…</Alert>
+        )}
         <form onSubmit={submit} className="space-y-6">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Possible warning symptoms</p>
@@ -1130,11 +1139,12 @@ function DailyCheckin() {
                 </select>
               </Field>
               {showMedicationFollowup && (
-                <Field label="Was it missed completely or taken late?">
-                  <select className={inputCls} value={form.medication_late === "yes" ? "late" : form.medication_late === "no" ? "missed" : ""} onChange={(e) => setForm({ ...form, medication_late: e.target.value === "late" ? "yes" : e.target.value === "missed" ? "no" : "" })}>
+                <Field label="Was it missed completely, taken late, or only some taken?">
+                  <select className={inputCls} value={form.medication_issue} onChange={set("medication_issue")}>
                     <option value="">—</option>
                     <option value="missed">Missed completely</option>
                     <option value="late">Taken late</option>
+                    <option value="partial">Only some taken</option>
                   </select>
                 </Field>
               )}
@@ -1153,14 +1163,12 @@ function DailyCheckin() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-3">Physical factors</p>
             <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Been unwell recently?">
-                <select className={inputCls} value={form.illness} onChange={set("illness")}>
-                  <option value="none">No</option>
-                  <option value="fever">Fever</option>
-                  <option value="infection">Infection</option>
-                  <option value="other">Other</option>
-                </select>
-              </Field>
+              <YesNoField label="Been unwell recently?" value={form.illness} onChange={set("illness")} />
+              {form.illness === "yes" && (
+                <Field label="What was it? (optional)">
+                  <input className={inputCls} value={form.illness_note} onChange={set("illness_note")} placeholder="e.g. fever, stomach bug, migraine" />
+                </Field>
+              )}
               <YesNoField label="Eaten normally today?" value={form.ate_normally} onChange={set("ate_normally")} />
               <YesNoField label="Enough fluids today?" value={form.hydrated} onChange={set("hydrated")} />
               <YesNoField label="Unusually strenuous exercise today?" value={form.strenuous_exercise} onChange={set("strenuous_exercise")} />
@@ -1304,6 +1312,22 @@ function BaselineInfo() {
           </Field>
         </div>
         <div className="sm:col-span-2">
+          <Field label="Dietary / food recommendations (optional)">
+            <textarea rows={2} className={inputCls} value={form.diet_plan} onChange={set("diet_plan")} placeholder="e.g. Ketogenic diet, avoid high-sugar meals" />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Exercise / physical activity recommendations (optional)">
+            <textarea rows={2} className={inputCls} value={form.exercise_plan} onChange={set("exercise_plan")} placeholder="e.g. 30 min moderate walking daily, avoid contact sports" />
+          </Field>
+          {data.lifestyle_prescribed_by && (
+            <p className="text-xs text-emerald-600 font-medium mt-1">
+              ✓ Prescribed by {data.lifestyle_prescribed_by} on {fmtDate(data.lifestyle_prescribed_at)}. Editing either
+              field above replaces it with your own self-report.
+            </p>
+          )}
+        </div>
+        <div className="sm:col-span-2">
           <Button type="submit" disabled={busy}>{busy && <Spinner />}Save baseline information</Button>
         </div>
       </form>
@@ -1321,7 +1345,11 @@ function Profile() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (data && !form) setForm({ full_name: data.full_name, age: data.age ?? "", medical_history: data.medical_history, baseline_heart_rate: data.baseline_heart_rate, baseline_eda: data.baseline_eda });
+    if (data && !form) setForm({
+      full_name: data.full_name, age: data.age ?? "", medical_history: data.medical_history,
+      family_history: data.family_history, medication_history: data.medication_history,
+      baseline_heart_rate: data.baseline_heart_rate, baseline_eda: data.baseline_eda,
+    });
   }, [data, form]);
 
   if (loading || !form) return <Card><Skeleton lines={4} /></Card>;
@@ -1338,6 +1366,7 @@ function Profile() {
         method: "PUT",
         body: {
           full_name: form.full_name, age: form.age ? Number(form.age) : null, medical_history: form.medical_history,
+          family_history: form.family_history, medication_history: form.medication_history,
           baseline_heart_rate: Number(form.baseline_heart_rate), baseline_eda: Number(form.baseline_eda),
         },
       });
@@ -1374,8 +1403,18 @@ function Profile() {
             <input type="number" min={0.5} max={25} step={0.1} className={inputCls} value={form.baseline_eda} onChange={set("baseline_eda")} />
           </Field>
           <div className="sm:col-span-2">
-            <Field label="Medical history">
+            <Field label="Past medical history">
               <textarea rows={3} className={inputCls} value={form.medical_history} onChange={set("medical_history")} />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="Family history">
+              <textarea rows={3} className={inputCls} value={form.family_history} onChange={set("family_history")} placeholder="e.g. Mother has epilepsy, no other known family neurological conditions" />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="Past medication history">
+              <textarea rows={3} className={inputCls} value={form.medication_history} onChange={set("medication_history")} placeholder="e.g. Tried Carbamazepine 2019-2021, discontinued due to side effects" />
             </Field>
           </div>
           <div className="sm:col-span-2">

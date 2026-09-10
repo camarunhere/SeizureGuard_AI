@@ -16,7 +16,9 @@ const userSchema = new Schema({
 
   // Patient-only fields
   age: Number,
-  medicalHistory: { type: String, default: "" },
+  medicalHistory: { type: String, default: "" }, // "Past medical history" in the UI
+  familyHistory: { type: String, default: "" },
+  medicationHistory: { type: String, default: "" }, // "Past medication history" — prior AEDs tried, distinct from `medications` (current)
   baselineHeartRate: { type: Number, default: 72 },
   baselineEda: { type: Number, default: 4.0 }, // resting skin conductance, microsiemens
 
@@ -43,6 +45,15 @@ const userSchema = new Schema({
   recentMedicationChanges: { type: String, default: "" },
   otherConditions: { type: String, default: "" },
   knownTriggers: { type: String, default: "" },
+
+  // Lifestyle modification (diet + exercise) — same provenance pattern as
+  // medications above: a clinician prescribes it from the Patients page,
+  // it's editable by the patient too, and editing it themselves clears the
+  // "prescribed by" attribution rather than misrepresenting whose plan it is.
+  dietPlan: { type: String, default: "" },
+  exercisePlan: { type: String, default: "" },
+  lifestylePrescribedByName: { type: String, default: "" },
+  lifestylePrescribedAt: { type: Date, default: null },
 
   // Clinician: patients they've linked to, selected by name from the
   // clinician-facing patient directory (see GET /api/clinician/directory).
@@ -156,7 +167,10 @@ const dailyCheckinSchema = new Schema({
 
   // Medication
   medicationTaken: { type: String, enum: ["yes", "no", "partially"] },
-  medicationLate: Boolean,
+  // Follow-up shown when medicationTaken is "no" or "partially" — what
+  // actually happened: the dose was skipped entirely, taken later than
+  // usual, or only part of it was taken.
+  medicationIssue: { type: String, enum: ["", "missed", "late", "partial"], default: "" },
 
   // Stress & wellbeing (0-10 scales)
   stressLevel: { type: Number, min: 0, max: 10 },
@@ -164,7 +178,8 @@ const dailyCheckinSchema = new Schema({
   fatigueLevel: { type: Number, min: 0, max: 10 },
 
   // Physical factors
-  illness: { type: String, enum: ["none", "fever", "infection", "other"], default: "none" },
+  illness: { type: Boolean, default: false }, // "Been unwell recently?"
+  illnessNote: { type: String, default: "" }, // what it was, if yes
   ateNormally: Boolean,
   hydrated: Boolean,
   strenuousExercise: Boolean,

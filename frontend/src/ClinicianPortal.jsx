@@ -3,7 +3,14 @@ import { api, useApi } from "./api";
 import { Alert, Button, Card, Field, Skeleton, Spinner, classLabel, fmtDate, inputCls, primaryContributors, RiskBadge, RiskFingerprint } from "./ui";
 
 export default function ClinicianPortal({ tab }) {
-  if (tab === "medications") return <MedicationAssistant />;
+  if (tab === "medications") {
+    return (
+      <div className="space-y-6">
+        <MedicationAssistant />
+        <LifestyleModification />
+      </div>
+    );
+  }
   return <PatientsTab />;
 }
 
@@ -122,7 +129,9 @@ function PatientReview({ patientId, onUnlink }) {
         <button onClick={onUnlink} className="absolute top-6 right-6 text-xs font-semibold text-red-500 hover:text-red-700">Unlink</button>
         <div className="grid sm:grid-cols-2 gap-4 text-sm">
           <div><p className="text-xs uppercase tracking-wide text-slate-400">Age</p><p className="font-medium text-slate-700">{patient.age ?? "—"}</p></div>
-          <div><p className="text-xs uppercase tracking-wide text-slate-400">Medical history</p><p className="font-medium text-slate-700">{patient.medical_history || "—"}</p></div>
+          <div><p className="text-xs uppercase tracking-wide text-slate-400">Past medical history</p><p className="font-medium text-slate-700">{patient.medical_history || "—"}</p></div>
+          <div><p className="text-xs uppercase tracking-wide text-slate-400">Family history</p><p className="font-medium text-slate-700">{patient.family_history || "—"}</p></div>
+          <div><p className="text-xs uppercase tracking-wide text-slate-400">Past medication history</p><p className="font-medium text-slate-700">{patient.medication_history || "—"}</p></div>
         </div>
         <div className="mt-4 pt-4 border-t border-slate-100 text-sm">
           <p className="text-xs uppercase tracking-wide text-slate-400">Current medications</p>
@@ -131,6 +140,23 @@ function PatientReview({ patientId, onUnlink }) {
             <p className="text-xs mt-1">
               {patient.medications_prescribed_by
                 ? <span className="text-emerald-600 font-medium">✓ Prescribed by {patient.medications_prescribed_by} on {fmtDate(patient.medications_prescribed_at)}</span>
+                : <span className="text-slate-400">Self-reported by the patient — not yet confirmed by a clinician.</span>}
+            </p>
+          )}
+        </div>
+        <div className="mt-4 pt-4 border-t border-slate-100 text-sm grid sm:grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-400">Diet / food plan</p>
+            <p className="font-medium text-slate-700 whitespace-pre-wrap">{patient.diet_plan || "None recorded"}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-400">Exercise / activity plan</p>
+            <p className="font-medium text-slate-700 whitespace-pre-wrap">{patient.exercise_plan || "None recorded"}</p>
+          </div>
+          {(patient.diet_plan || patient.exercise_plan) && (
+            <p className="text-xs sm:col-span-2">
+              {patient.lifestyle_prescribed_by
+                ? <span className="text-emerald-600 font-medium">✓ Prescribed by {patient.lifestyle_prescribed_by} on {fmtDate(patient.lifestyle_prescribed_at)}</span>
                 : <span className="text-slate-400">Self-reported by the patient — not yet confirmed by a clinician.</span>}
             </p>
           )}
@@ -446,5 +472,103 @@ function MedicationDraft({ result }) {
         </div>
       </Card>
     </div>
+  );
+}
+
+// ---- Lifestyle Modification -------------------------------------------------------
+// Clinician-authored diet and exercise recommendations, applied directly to
+// the patient's Baseline Info — NOT AI-generated, a doctor's own guidance,
+// same "select a linked patient, edit, apply" flow as the Medication
+// Assistant above but without an AI drafting step.
+function LifestyleModification() {
+  const patients = useApi("/api/clinician/patients");
+  const [selectedId, setSelectedId] = useState("");
+  const [dietPlan, setDietPlan] = useState("");
+  const [exercisePlan, setExercisePlan] = useState("");
+  const [current, setCurrent] = useState(null);
+  const [loadingPatient, setLoadingPatient] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const selectPatient = async (id) => {
+    setSelectedId(id);
+    setSaved(false);
+    setSaveError("");
+    setCurrent(null);
+    setDietPlan("");
+    setExercisePlan("");
+    if (!id) return;
+    setLoadingPatient(true);
+    try {
+      const data = await api(`/api/clinician/patients/${id}`);
+      setDietPlan(data.patient.diet_plan || "");
+      setExercisePlan(data.patient.exercise_plan || "");
+      setCurrent(data.patient);
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setLoadingPatient(false);
+    }
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    setSaveError("");
+    setSaved(false);
+    setSaveBusy(true);
+    try {
+      await api(`/api/clinician/patients/${selectedId}/lifestyle`, {
+        method: "POST",
+        body: { diet_plan: dietPlan, exercise_plan: exercisePlan },
+      });
+      setSaved(true);
+    } catch (err) {
+      setSaveError(err.message);
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Lifestyle modification">
+      <p className="text-xs text-slate-400 -mt-2 mb-4">
+        Prescribe dietary guidance and recommended exercise/physical activity for a linked patient — entered directly
+        by you, not AI-generated, and reflected immediately on their Baseline Info page.
+      </p>
+      <Alert>{saveError}</Alert>
+      <Field label="Patient">
+        {patients.loading ? <Skeleton lines={1} /> : patients.error ? <Alert>{patients.error}</Alert> : !patients.data.length ? (
+          <p className="text-sm text-slate-400">No patients linked yet — link one on the Patients tab first.</p>
+        ) : (
+          <select className={inputCls} value={selectedId} onChange={(e) => selectPatient(e.target.value)}>
+            <option value="">Select a patient…</option>
+            {patients.data.map((p) => (
+              <option key={p.id} value={p.id}>{p.full_name}{p.age ? `, ${p.age}` : ""} (#{p.code})</option>
+            ))}
+          </select>
+        )}
+      </Field>
+
+      {selectedId && (loadingPatient ? <Skeleton lines={3} /> : (
+        <form onSubmit={save} className="space-y-4 mt-4">
+          {current && (current.lifestyle_prescribed_by ? (
+            <p className="text-xs text-emerald-600 font-medium">✓ Currently prescribed by {current.lifestyle_prescribed_by} on {fmtDate(current.lifestyle_prescribed_at)}</p>
+          ) : (current.diet_plan || current.exercise_plan) ? (
+            <p className="text-xs text-slate-400">Currently self-reported by the patient — not yet confirmed by a clinician.</p>
+          ) : null)}
+          <Field label="Dietary / food recommendations">
+            <textarea rows={3} className={inputCls} value={dietPlan} onChange={(e) => setDietPlan(e.target.value)} placeholder="e.g. Ketogenic diet, avoid high-sugar meals, regular meal timing" />
+          </Field>
+          <Field label="Exercise / physical activity recommendations">
+            <textarea rows={3} className={inputCls} value={exercisePlan} onChange={(e) => setExercisePlan(e.target.value)} placeholder="e.g. 30 min moderate walking daily, avoid contact sports" />
+          </Field>
+          {saved && <p className="text-sm font-semibold text-emerald-600">✓ Saved to the patient's record.</p>}
+          <Button type="submit" disabled={saveBusy || (!dietPlan.trim() && !exercisePlan.trim())}>
+            {saveBusy && <Spinner />}Save lifestyle plan
+          </Button>
+        </form>
+      ))}
+    </Card>
   );
 }

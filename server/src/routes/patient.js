@@ -30,16 +30,20 @@ router.get("/profile", patientOnly, (req, res) => {
     email: u.email,
     age: u.age ?? null,
     medical_history: u.medicalHistory || "",
+    family_history: u.familyHistory || "",
+    medication_history: u.medicationHistory || "",
     baseline_heart_rate: u.baselineHeartRate,
     baseline_eda: u.baselineEda,
   });
 });
 
 router.put("/profile", patientOnly, async (req, res) => {
-  const { full_name, age, medical_history, baseline_heart_rate, baseline_eda } = req.body || {};
+  const { full_name, age, medical_history, family_history, medication_history, baseline_heart_rate, baseline_eda } = req.body || {};
   if (full_name != null) req.user.fullName = full_name;
   if (age != null) req.user.age = age;
   if (medical_history != null) req.user.medicalHistory = medical_history;
+  if (family_history != null) req.user.familyHistory = family_history;
+  if (medication_history != null) req.user.medicationHistory = medication_history;
   if (baseline_heart_rate != null) req.user.baselineHeartRate = baseline_heart_rate;
   if (baseline_eda != null) req.user.baselineEda = baseline_eda;
   await req.user.save();
@@ -68,6 +72,10 @@ router.get("/baseline", patientOnly, (req, res) => {
     recent_medication_changes: u.recentMedicationChanges || "",
     other_conditions: u.otherConditions || "",
     known_triggers: u.knownTriggers || "",
+    diet_plan: u.dietPlan || "",
+    exercise_plan: u.exercisePlan || "",
+    lifestyle_prescribed_by: u.lifestylePrescribedByName || null,
+    lifestyle_prescribed_at: u.lifestylePrescribedAt ? u.lifestylePrescribedAt.toISOString() : null,
   });
 });
 
@@ -77,14 +85,18 @@ router.put("/baseline", patientOnly, async (req, res) => {
     age: "age", sex: "sex", seizure_type: "seizureType", seizure_frequency: "seizureFrequency",
     has_aura: "hasAura", aura_symptoms: "auraSymptoms", medications: "medications",
     recent_medication_changes: "recentMedicationChanges", other_conditions: "otherConditions",
-    known_triggers: "knownTriggers",
+    known_triggers: "knownTriggers", diet_plan: "dietPlan", exercise_plan: "exercisePlan",
   };
-  // A patient editing their medications themselves supersedes whatever a
-  // clinician last prescribed — clear the attribution so it's never shown
-  // as the clinician's plan once it no longer is.
+  // A patient editing their medications/lifestyle plan themselves supersedes
+  // whatever a clinician last prescribed — clear the attribution so it's
+  // never shown as the clinician's plan once it no longer is.
   if (b.medications != null && b.medications !== req.user.medications) {
     req.user.medicationsPrescribedByName = "";
     req.user.medicationsPrescribedAt = null;
+  }
+  if ((b.diet_plan != null && b.diet_plan !== req.user.dietPlan) || (b.exercise_plan != null && b.exercise_plan !== req.user.exercisePlan)) {
+    req.user.lifestylePrescribedByName = "";
+    req.user.lifestylePrescribedAt = null;
   }
   for (const [key, prop] of Object.entries(fields)) {
     if (b[key] != null) req.user[prop] = b[key];
@@ -117,9 +129,9 @@ function checkinFields(c) {
   return {
     warningSymptoms: c.warningSymptoms, warningSymptomsOther: c.warningSymptomsOther,
     sleepHours: c.sleepHours, sleepQuality: c.sleepQuality, wokeFrequently: c.wokeFrequently,
-    medicationTaken: c.medicationTaken, medicationLate: c.medicationLate,
+    medicationTaken: c.medicationTaken, medicationIssue: c.medicationIssue,
     stressLevel: c.stressLevel, anxietyLevel: c.anxietyLevel, fatigueLevel: c.fatigueLevel,
-    illness: c.illness, ateNormally: c.ateNormally, hydrated: c.hydrated, strenuousExercise: c.strenuousExercise,
+    illness: c.illness, illnessNote: c.illnessNote, ateNormally: c.ateNormally, hydrated: c.hydrated, strenuousExercise: c.strenuousExercise,
     alcohol: c.alcohol, caffeineMoreThanUsual: c.caffeineMoreThanUsual, recreationalDrugs: c.recreationalDrugs,
     knownTriggerExperienced: c.knownTriggerExperienced, triggerNote: c.triggerNote, comparedToUsual: c.comparedToUsual,
   };
@@ -141,11 +153,12 @@ function checkinPayload(c, history) {
     sleep_quality: c.sleepQuality || null,
     woke_frequently: c.wokeFrequently ?? null,
     medication_taken: c.medicationTaken || null,
-    medication_late: c.medicationLate ?? null,
+    medication_issue: c.medicationIssue || "",
     stress_level: c.stressLevel ?? null,
     anxiety_level: c.anxietyLevel ?? null,
     fatigue_level: c.fatigueLevel ?? null,
-    illness: c.illness || "none",
+    illness: c.illness ?? false,
+    illness_note: c.illnessNote || "",
     ate_normally: c.ateNormally ?? null,
     hydrated: c.hydrated ?? null,
     strenuous_exercise: c.strenuousExercise ?? null,
@@ -182,11 +195,11 @@ router.post("/checkin", patientOnly, async (req, res) => {
     warningSymptoms: b.warning_symptoms, warningSymptomsOther: b.warning_symptoms_other,
     sleepHours: b.sleep_hours != null ? Number(b.sleep_hours) : undefined,
     sleepQuality: b.sleep_quality, wokeFrequently: b.woke_frequently,
-    medicationTaken: b.medication_taken, medicationLate: b.medication_late,
+    medicationTaken: b.medication_taken, medicationIssue: b.medication_issue,
     stressLevel: b.stress_level != null ? Number(b.stress_level) : undefined,
     anxietyLevel: b.anxiety_level != null ? Number(b.anxiety_level) : undefined,
     fatigueLevel: b.fatigue_level != null ? Number(b.fatigue_level) : undefined,
-    illness: b.illness, ateNormally: b.ate_normally, hydrated: b.hydrated,
+    illness: b.illness, illnessNote: b.illness_note, ateNormally: b.ate_normally, hydrated: b.hydrated,
     strenuousExercise: b.strenuous_exercise, alcohol: b.alcohol,
     caffeineMoreThanUsual: b.caffeine_more_than_usual, recreationalDrugs: b.recreational_drugs,
     knownTriggerExperienced: b.known_trigger_experienced, triggerNote: b.trigger_note,

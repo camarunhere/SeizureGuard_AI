@@ -26,7 +26,7 @@ const NAV = {
   ],
   clinician: [
     ["patients", "Patients"],
-    ["medications", "AI Medication Assistant"],
+    ["medications", "Medication & Lifestyle"],
   ],
   admin: [
     ["clinicians", "Clinician Approvals"],
@@ -48,7 +48,7 @@ const PAGE_HERO = {
   },
   clinician: {
     patients: ["🩺", "Clinical Dashboard", "Multi-patient monitoring, AI reports, clinical decision support.", "from-blue-900 via-indigo-800 to-slate-800"],
-    medications: ["💊", "AI Medication Assistant", "AI-drafted medication suggestions from a patient's condition — always a draft for your review, never auto-prescribed.", "from-violet-800 via-purple-800 to-indigo-900"],
+    medications: ["💊", "Medication & Lifestyle", "AI-drafted medication suggestions plus clinician-prescribed diet and exercise guidance — always your call, never auto-applied.", "from-violet-800 via-purple-800 to-indigo-900"],
   },
   admin: {
     clinicians: ["🛡️", "Clinician Approvals", "Review and approve clinician registrations before they can log in.", "from-slate-900 via-blue-950 to-slate-800"],
@@ -126,7 +126,7 @@ export default function App() {
               <p className="text-sm text-white/80 mt-1 relative max-w-xl">{hero[2]}</p>
             </div>
           )}
-          {user.role === "patient" ? <PatientPortal tab={active} notif={notif} />
+          {user.role === "patient" ? <PatientPortal tab={active} notif={notif} onNavigate={setTab} />
             : user.role === "admin" ? <AdminPortal />
             : <ClinicianPortal tab={active} />}
         </main>

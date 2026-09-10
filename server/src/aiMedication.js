@@ -33,10 +33,12 @@ export function buildConditionSummary(patient, seizureEvents = [], latestPredict
   lines.push(`Diagnosis date: ${patient.diagnosisDate ? patient.diagnosisDate.toISOString().slice(0, 10) : "not recorded"}`);
   lines.push(`Has aura/warning symptoms: ${patient.hasAura || "not recorded"}${patient.auraSymptoms ? ` (${patient.auraSymptoms})` : ""}`);
   lines.push(`Current medications: ${patient.medications || "none recorded"}`);
+  lines.push(`Past medication history (prior AEDs tried): ${patient.medicationHistory || "none recorded"}`);
   lines.push(`Recent medication changes: ${patient.recentMedicationChanges || "none recorded"}`);
   lines.push(`Other conditions: ${patient.otherConditions || "none recorded"}`);
   lines.push(`Known triggers: ${patient.knownTriggers || "none recorded"}`);
-  lines.push(`Medical history notes: ${patient.medicalHistory || "none recorded"}`);
+  lines.push(`Past medical history: ${patient.medicalHistory || "none recorded"}`);
+  lines.push(`Family history: ${patient.familyHistory || "none recorded"}`);
 
   if (seizureEvents.length) {
     lines.push(`\nRecent logged seizure events (${seizureEvents.length} most recent):`);

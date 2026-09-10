@@ -137,7 +137,7 @@ export default function AuthPage({ onLogin, onBack }) {
                 <Field label="Age">
                   <input type="number" className={inputCls} value={form.age} onChange={set("age")} min={1} max={120} />
                 </Field>
-                <Field label="Medical history (optional)">
+                <Field label="Past medical history (optional)">
                   <textarea className={inputCls} rows={2} value={form.medical_history} onChange={set("medical_history")} placeholder="e.g. Focal epilepsy since 2019" />
                 </Field>
               </>
