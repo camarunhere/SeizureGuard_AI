@@ -411,7 +411,6 @@ function VitalsFields({ vitals, setVitals }) {
 
 function ManualEntry({ onResult }) {
   const [vitals, setVitals] = useState(EMPTY_VITALS);
-  const [epochType, setEpochType] = useState("normal");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -424,7 +423,7 @@ function ManualEntry({ onResult }) {
         method: "POST",
         body: {
           source: "manual",
-          epoch_type: epochType,
+          epoch_type: "seizure",
           heart_rate: Number(vitals.heart_rate),
           spo2: Number(vitals.spo2),
           movement_level: Number(vitals.movement_level) / 100,
@@ -446,17 +445,11 @@ function ManualEntry({ onResult }) {
   return (
     <Card title="Enter a reading manually">
       <p className="text-xs text-slate-400 -mt-2 mb-4">
-        No wearable handy? Type in cardiac, autonomic (EDA), muscular (sEMG), and motion vitals from a manual check, pick a
-        sample EEG epoch — the AI still runs a real prediction on it.
+        No wearable handy? Type in cardiac, autonomic (EDA), muscular (sEMG), and motion vitals from a manual check —
+        the AI still runs a real prediction against a sample seizure-activity (ictal) EEG epoch.
       </p>
       <Alert>{error}</Alert>
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Sample EEG epoch">
-          <select className={inputCls} value={epochType} onChange={(e) => setEpochType(e.target.value)}>
-            <option value="normal">Normal (baseline recording)</option>
-            <option value="seizure">Seizure activity (ictal recording)</option>
-          </select>
-        </Field>
         <VitalsFields vitals={vitals} setVitals={setVitals} />
         <Button type="submit" disabled={busy}>{busy && <Spinner />}Run prediction</Button>
       </form>
