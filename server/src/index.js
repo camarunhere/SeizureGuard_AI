@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -39,7 +40,10 @@ app.use("/api/admin", adminRoutes);
 app.use(express.static(FRONTEND_DIST));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ detail: "Not found." });
-  res.sendFile(path.join(FRONTEND_DIST, "index.html"));
+  const indexHtml = path.join(FRONTEND_DIST, "index.html");
+  // API-only deploys (Render + Vercel) ship no frontend build.
+  if (!existsSync(indexHtml)) return res.json({ status: "ok", message: "SeizureGuard API. The web app is hosted separately." });
+  res.sendFile(indexHtml);
 });
 
 const start = async () => {
