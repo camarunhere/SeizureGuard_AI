@@ -6,11 +6,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
 
 WORKDIR /app
 
-# Python deps (CPU-only torch keeps the image small)
+# Python deps. torch is pinned to the version the model was trained with (2.2.2)
+# and pulled from the CPU wheel index (PyPI stays available for its dependencies).
 COPY requirements.txt ./
 RUN python3 -m venv .venv \
-    && .venv/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
-    && .venv/bin/pip install --no-cache-dir -r requirements.txt
+    && .venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && .venv/bin/pip install --no-cache-dir --prefer-binary \
+       --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.2.2" \
+    && .venv/bin/pip install --no-cache-dir --prefer-binary -r requirements.txt
 
 # Node deps
 COPY server/package*.json server/

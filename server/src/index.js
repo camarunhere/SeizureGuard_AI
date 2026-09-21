@@ -44,8 +44,9 @@ app.get("*", (req, res) => {
 
 const start = async () => {
   await connectDb();
-  await ensureMlService();
+  // Listen before the ML service finishes booting so hosts (Render) see an open port.
   app.listen(PORT, () => console.log(`[server] http://127.0.0.1:${PORT}`));
+  await ensureMlService();
 };
 
 start();
