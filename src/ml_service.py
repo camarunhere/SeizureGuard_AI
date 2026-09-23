@@ -104,7 +104,14 @@ def _classify(probability: float) -> tuple[str, str, str | None]:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": _state["model"] is not None}
+    return {
+        "status": "ok",
+        "model_loaded": _state["model"] is not None,
+        # Surfaced separately from model_loaded: the model can load fine
+        # while the /simulate sample pool fails independently (e.g. the
+        # data file missing from a deploy) — see DATA_PATH / _load() above.
+        "sim_loaded": _state["sim_pool"] is not None,
+    }
 
 
 @app.get("/metadata")
