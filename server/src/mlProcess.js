@@ -5,10 +5,17 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ML_URL = process.env.ML_SERVICE_URL || "http://127.0.0.1:8091";
 const ML_PORT = new URL(ML_URL).port || "8091";
-const REPO_ROOT = path.resolve(process.cwd(), "..");
+// Derived from this file's own location, not process.cwd() — cwd depends on
+// how the process happens to be launched (npm start --prefix vs a direct
+// `node server/src/index.js` vs a process manager), and getting it wrong
+// silently breaks the Python child's relative paths (models/, data/),
+// which fails as "Simulation data not loaded" with no obvious cause.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 
 let child = null;
 let intentionalStop = false;

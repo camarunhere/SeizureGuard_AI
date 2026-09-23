@@ -1,5 +1,8 @@
 **/node_modules
 frontend
-data
+# data/eeg_seizure_raw.csv is needed at runtime, not just for training — it
+# backs the /simulate endpoint's sample pool (src/ml_service.py). Only
+# exclude the large local MongoDB dump, not the whole data/ directory.
+data/mongo
 .venv
 .git

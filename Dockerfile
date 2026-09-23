@@ -19,9 +19,13 @@ RUN python3 -m venv .venv \
 COPY server/package*.json server/
 RUN npm ci --omit=dev --prefix server
 
-# App code + trained models (data/ is only needed for training)
+# App code + trained models. eeg_seizure_raw.csv is also needed at runtime
+# (not just training) — it backs the /simulate endpoint's sample EEG+vitals
+# pool for Live Monitoring; without it the ML service loads fine but
+# /simulate fails with "Simulation data not loaded."
 COPY src ./src
 COPY models ./models
+COPY data/eeg_seizure_raw.csv ./data/eeg_seizure_raw.csv
 COPY server ./server
 
 WORKDIR /app/server
